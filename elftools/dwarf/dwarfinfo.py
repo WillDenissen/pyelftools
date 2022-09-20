@@ -134,6 +134,10 @@ class DWARFInfo(object):
         self._cu_cache = []
         self._cu_offsets_map = []
 
+        # Cache of type units: a dict keyed by DW_FROM_ref_sig8 signatures.
+        # Access with get_TU_with_signature().
+        self._tu_cache = {}
+
     @property
     def has_debug_info(self):
         """ Return whether this contains debug information.
@@ -200,6 +204,43 @@ class DWARFInfo(object):
                 return cu
 
         raise ValueError("CU for reference address %s not found" % refaddr)
+
+    def get_DIE_from_refsig8(self, refsig8):
+        """ Given a .debug_info section offset of a DIE, return the DIE.
+
+            refsig8:
+                The refaddr may come from a DW_FORM_ref_sig8 attribute.
+        """
+        cu = self.get_TU_with_signature(refsig8)
+        top_DIE = cu.get_top_DIE()
+        return cu.iter_DIE_children(top_DIE).__next__()
+
+    def get_TU_with_signature(self, refsig8):
+        """ Find the TU that has the given signature in the
+            .debug_info section.
+
+            refsig8:
+                A refsig8 from a DW_FORM_ref_sig8 attribute.
+
+           This function will parse and cache TUs until the TU
+           with signature is found.
+        """
+        dwarf_assert(
+            self.has_debug_info,
+            'TU lookup but no debug info section')
+
+        if refsig8 in self._tu_cache:
+            return self._tu_cache[refsig8]
+
+        for cu in self._parse_CUs_iter():
+            # TODO support for 'DW_UT_split_type'
+            if cu['version'] >= 5 and cu.header.unit_type in ('DW_UT_type',):
+                if cu['type_signature'] == refsig8:
+                    # Insert the signature and object into the _tu_cache.
+                    self._tu_cache[refsig8] = cu
+                    return cu
+
+        raise ValueError("TU with signature %x not found" % refsig8)
 
     def get_CU_at(self, offset):
         """ Given a CU header offset, return the parsed CU.

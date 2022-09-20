@@ -15,6 +15,7 @@ sys.path.insert(0, '.')
 
 from elftools import __version__
 from elftools.elf.elffile import ELFFile
+from elftools.dwarf.datatype_cpp import describe_cpp_datatype
 
 class DumpHeader:
 
@@ -38,8 +39,10 @@ class DumpHeader:
                 indentation level 
         """
         self.emit('%*s%s' % (lvl, '  ', die))
+        self.emit('Type: %s' % describe_cpp_datatype(die))
+
         for cdie in die.iter_children():
-           self.dump_die(cdie, lvl + 1)
+            self.dump_die(cdie, lvl + 1)
 
     def dump_header(self):
         """ dump header from the elffile.
