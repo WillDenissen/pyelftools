@@ -28,22 +28,22 @@ def parse_cpp_datatype(var_die):
     """
     t = TypeDesc()
 
-    if not 'DW_AT_type' in var_die.attributes:
+    if not DIE_has_type(var_die):
         t.tag = ''
         return t
 
-    type_die = var_die.get_DIE_from_attribute('DW_AT_type')
+    type_die = DIE_type(var_die)
 
     mods = []
     # Unlike readelf, dwarfdump doesn't chase typedefs
     while type_die.tag in ('DW_TAG_const_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type'):
         modifier = _strip_type_tag(type_die) # const/reference/pointer
         mods.insert(0, modifier)
-        if not 'DW_AT_type' in type_die.attributes: # void* is encoded as a pointer to nothing
+        if not DIE_has_type(type_die): # void* is encoded as a pointer to nothing
             t.name = t.tag = "void"
             t.modifiers = tuple(mods)
             return t
-        type_die = type_die.get_DIE_from_attribute('DW_AT_type')
+        type_die = DIE_type(type_die)
 
     # From this point on, type_die doesn't change
     t.tag = _strip_type_tag(type_die)
@@ -52,7 +52,7 @@ def parse_cpp_datatype(var_die):
     if t.tag in ('ptr_to_member', 'subroutine'):
         if t.tag == 'ptr_to_member':
             ptr_prefix = DIE_name(type_die.get_DIE_from_attribute('DW_AT_containing_type')) + "::"
-            type_die = type_die.get_DIE_from_attribute('DW_AT_type')
+            type_die = DIE_type(type_die)
         elif "DW_AT_object_pointer" in type_die.attributes: # Older compiler... Subroutine, but with an object pointer
             ptr_prefix = DIE_name(DIE_type(DIE_type(type_die.get_DIE_from_attribute('DW_AT_object_pointer')))) + "::"
         else: # Not a pointer to member
@@ -61,7 +61,7 @@ def parse_cpp_datatype(var_die):
         if t.tag == 'subroutine':
             params = tuple(format_function_param(p, p) for p in type_die.iter_children() if p.tag in ("DW_TAG_formal_parameter", "DW_TAG_unspecified_parameters") and 'DW_AT_artificial' not in p.attributes)
             params = ", ".join(params)
-            if 'DW_AT_type' in type_die.attributes:
+            if DIE_has_type(type_die):
                 retval_type = parse_cpp_datatype(type_die)
                 is_pointer = retval_type.modifiers and retval_type.modifiers[-1] == 'pointer'
                 retval_type = str(retval_type)
@@ -114,7 +114,7 @@ class TypeDesc(object):
         to produce a type description string similar to those of llvm-dwarfdump.
 
         name - name for primitive datatypes, element name for arrays, the
-            whole name for functions and function pouinters
+            whole name for functions and function pointers
 
         modifiers - a collection of "const"/"pointer"/"reference", from the
             chain of DIEs preceeding the real type DIE
@@ -174,10 +174,13 @@ def DIE_name(die):
     return bytes2str(die.attributes['DW_AT_name'].value)
 
 def safe_DIE_name(die, default = ''):
-    return bytes2str(die.attributes['DW_AT_name'].value) if 'DW_AT_name' in die.attributes else default
+    return bytes2str(die.attributes['DW_AT_name'].value) if DIE_has_type(die) else default
 
 def DIE_type(die):
     return die.get_DIE_from_attribute("DW_AT_type")
+
+def DIE_has_type(die):
+    return 'DW_AT_type' in die.attributes
 
 class ClassDesc(object):
     def __init__(self):
