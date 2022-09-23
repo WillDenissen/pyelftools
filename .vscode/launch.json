@@ -1,0 +1,17 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Python: Stub2hdr",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/stub2hdr.py",
+            "console": "integratedTerminal",
+            "args": ["-o", "test/testfiles_for_stub2hdr/out/libping.h", "test/testfiles_for_stub2hdr/inp/libping.so"]
+        }
+    ]
+}

@@ -24,13 +24,16 @@ from elftools.dwarf.enums import ENUM_DW_ATE
 
 PROG = 'stub2hdr.py'
 
-tag2str = dict(
+tag2mod = dict(
     DW_TAG_pointer_type   = '*',
     DW_TAG_reference_type = '&',
     DW_TAG_const_type     = 'const',
+)
+
+tag2usr_cls = dict(
     DW_TAG_structure_type = 'struct',
     DW_TAG_union_type     = 'union',
-    DW_TAG_class_type     = '',
+    DW_TAG_class_type     = 'class',
 )
 
 enc2str = dict(
@@ -63,6 +66,16 @@ def pr_exit(self, die):
 def pr_skip(self, die):
     pass
 
+
+def st_subrange_type(self, die):
+    if 'DW_AT_upper_bound' in die.attributes:
+        res = '[%s]' % (die.attributes['DW_AT_upper_bound'].value + 1)
+    elif 'DW_AT_count' in die.attributes:
+        res = '[%s]' % die.attributes['DW_AT_count'].value
+    else:
+        res = '[]'
+
+    return res
 
 # dispatch table for st_<x>(self, die) functions
 # contains only type/variable/function type tags
@@ -122,111 +135,107 @@ deftag2st_func = dict(
   #DW_TAG_rvalue_reference_type    = 
 )
 
-def st_var(var_die):
+def st_var(vdie):
     '''Given a DIE that describes a DW_TAG_variable, a DW_TAG_parameter, or a DW_TAG_member
        containing an optional DW_AT_type
        
     Returns the C/C++ declaration as a single line string
     '''
-    return str(parse_var(var_die))
+    return str(parse_var(vdie))
 
-def parse_var(var_die):
+def peel_off_mods(tdie):
+    mod_l = []
+    # peel off the type modifiers from tdie
+    while tdie.tag in ('DW_TAG_const_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type'):
+        mod_l.insert(0, tdie.tag)
+        if not DIE_has_type(tdie): # void* is encoded as a pointer to nothing
+            t.name = 'void'
+            t.mods = tuple(mod_l)
+            return t
+        tdie = DIE_type(tdie)
+    return tdie, tuple(mod_l)
+
+def parse_var(vdie):
     '''parse a DIE that describes a variable, a parameter, or a member
 
     Returns a TypeDesc.
 
-    Does not follow typedefs, named struct/union/class defs.
+    Does not follow named struct/union/class/type defs.
     '''
-    # name = safe_DIE_name(var_die)
-    t = TypeDesc(safe_DIE_name(var_die))
+    t = TypeDesc()
 
-    if not DIE_has_type(var_die):
-        t.tag = 'DW_TAG_null'
+    if not DIE_has_type(vdie):
         return t
 
-    name     = DIE_name(var_die)
-    type_die = DIE_type(var_die)
+    name = DIE_name(vdie)
+    tdie = DIE_type(vdie)
 
-    mods = []
-    # Unlike readelf, dwarfdump doesn't chase typedefs
-    while type_die.tag in ('DW_TAG_const_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type'):
-        modifier = type_die.tag
-        mods.insert(0, modifier)
-        if not DIE_has_type(type_die): # void* is encoded as a pointer to nothing
-            t.tag = 'DW_TAG_null'
-            t.name = 'void'
-            t.modifiers = tuple(mods)
-            return t
-        type_die = DIE_type(type_die)
+    tdie, t.mods = peel_off_mods(tdie)
 
-    # From this point on, type_die doesn't change
-    t.tag = type_die.tag
-    t.modifiers = tuple(mods)
+    if not DIE_has_type(vdie):
+        return t
 
-    if t.tag in ('DW_TAG_ptr_to_member_type', 'DW_TAG_subroutine_type'):
-        if t.tag == 'DW_TAG_ptr_to_member_type':
-            ptr_prefix = DIE_name(type_die.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
-            type_die = DIE_type(type_die)
-        elif 'DW_AT_object_pointer' in type_die.attributes: # Older compiler... Subroutine, but with an object pointer
-            ptr_prefix = DIE_name(DIE_type(DIE_type(type_die.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
+    # From this point on, tdie doesn't change
+    if tdie.tag in ('DW_TAG_ptr_to_member_type', 'DW_TAG_subroutine_type'):
+        if tdie.tag == 'DW_TAG_ptr_to_member_type':
+            ptr_prefix = DIE_name(tdie.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
+            tdie = DIE_type(tdie)
+        elif 'DW_AT_object_pointer' in tdie.attributes: # Older compiler... Subroutine, but with an object pointer
+            ptr_prefix = DIE_name(DIE_type(DIE_type(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
         else: # Not a pointer to member
             ptr_prefix = ''
 
-        if t.tag == 'DW_TAG_subroutine_type':
-            params = tuple(format_function_param(p, p) for p in type_die.iter_children() 
+        if tdie.tag == 'DW_TAG_subroutine_type':
+            params = tuple(format_function_param(p, p) for p in tdie.iter_children() 
             if p.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and 'DW_AT_artificial' not in p.attributes)
             params = ', '.join(params)
-            if DIE_has_type(type_die):
-                retval_type = parse_var(type_die)
-                is_pointer = retval_type.modifiers and retval_type.modifiers[-1] == 'pointer'
-                retval_type = str(retval_type)
+            if DIE_has_type(tdie):
+                rtrn_type = parse_var(tdie)
+                is_pointer = rtrn_type.mods and rtrn_type.mods[-1] == 'DW_TAG_pointer_type'
+                rtrn_type = str(rtrn_type)
                 if not is_pointer:
-                    retval_type += ' '
+                    rtrn_type += ' '
             else:
-                retval_type = 'void '
+                rtrn_type = 'void '
 
-            if len(mods) and mods[-1] == 'pointer':
-                mods.pop()
-                t.modifiers = tuple(mods)
-                t.name = '%s(%s*)(%s)' % (retval_type, ptr_prefix, params)
+            if len(mod_l) and mod_l[-1] == 'DW_TAG_pointer_type':
+                mod_l.pop()
+                t.mods = tuple(mod_l)
+                t.name = '%s(%s*)(%s)' % (rtrn_type, ptr_prefix, params)
             else:
-                t.name = '%s(%s)' % (retval_type, params)
+                t.name = '%s(%s)' % (rtrn_type, params)
             return t
-    elif DIE_is_ptr_to_member_struct(type_die):
-        dt = parse_var(next(type_die.iter_children())) # The first element is pfn, a function pointer with a this
+    elif DIE_is_ptr_to_member_struct(tdie):
+        dt = parse_var(next(tdie.iter_children())) # The first element is pfn, a function pointer with a this
         dt.modifiers = tuple(dt.modifiers[:-1]) # Pop the extra pointer
-        dt.tag = 'DW_TAG_ptr_to_member_type' # Not a function pointer per se
+        dtdie.tag = 'DW_TAG_ptr_to_member_type' # Not a function pointer per se
         return dt
-    elif t.tag == 'DW_TAG_array_type':
-        t.dimensions = (_array_subtype_size(sub)
-            for sub in type_die.iter_children()
+    elif tdie.tag == 'DW_TAG_array_type':
+        t.dims = (_array_size(sub)
+            for sub in tdie.iter_children()
             if sub.tag == 'DW_TAG_subrange_type')
-        t.name = st_var(type_die)
+        t.name = st_var(tdie)
         return t
-    elif t.tag == 'DW_TAG_base_type':
-        encstr = DW_ATE_raw2name[type_die.attributes['DW_AT_encoding'].value]
-        t.name = enc2str.get(encstr, '') + ' ' + DIE_name(type_die) + ' ' + name
+    elif tdie.tag == 'DW_TAG_base_type':
+        t.name = DIE_name(tdie) + ' ' + name
         return t
-    elif t.tag == 'DW_TAG_structure_type':        
-        t.name = 'struct ' + DIE_name(type_die) + ' ' + name
-        return t
-    elif t.tag == 'DW_TAG_union_type':
-        t.name = 'union ' + DIE_name(type_die) + ' ' + name
+    elif tdie.tag in ('DW_TAG_structure_type', 'DW_TAG_union_type'):        
+        t.name = '%s %s %s' % (tag2usr_cls[tdie.tag], DIE_name(tdie), name)
         return t
 
     # Now the nonfunction types
     # Blank name is sometimes legal (unnamed unions, etc)
 
-    t.name = safe_DIE_name(type_die, t.tag + ' ')
+    t.name = DIE_opt_name(tdie, '/*anonymous*/')
 
     # Check the nesting - important for parameters
-    parent = type_die.get_parent()
-    scopes = list()
+    parent = tdie.get_parent()
+    scps = list()
     while parent.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_union_type', 'DW_TAG_namespace'):
-        scopes.insert(0, safe_DIE_name(parent, parent.tag + ' '))
+        scps.insert(0, DIE_opt_name(parent, '/*%s*/' % parent.tag))
         # If unnamed scope, fall back to scope type - like 'structure '
         parent = parent.get_parent()
-    t.scopes = tuple(scopes)
+    t.scps = tuple(scps)
 
     return t
 
@@ -236,25 +245,24 @@ class TypeDesc(object):
         name - name for primitive datatypes, element name for arrays, the
             whole name for functions and function pointers
 
-        modifiers - a collection of 'const'/'pointer'/'reference', from the
+        mods - a collection of 'const'/'pointer'/'reference', from the
             chain of DIEs preceeding the real type DIE
 
-        scopes - a collection of struct/class/namespace names, parents of the
+        scps - a collection of struct/class/namespace names, parents of the
             real type DIE
 
         tag - the tag of the real type DIE, stripped of initial DW_TAG_ and
             final _type
 
-        dimensions - the collection of array dimensions, if the type is an
-            array. -1 means an array of unknown dimension.
+        dims - the collection of array dimensions, if the type is an array. 
+            -1 means an array of unknown dimension.
 
     '''
-    def __init__(self, name = ''):
-        self.name = name
-        self.modifiers = () # Reads left to right
-        self.scopes = () # Reads left to right
-        self.tag = None
-        self.dimensions = None
+    def __init__(self):
+        self.name = 'void'
+        self.mods = () # Reads left to right
+        self.scps = () # Reads left to right
+        self.dims = None
 
     def __str__(self):
         '''Returns the C/C++ type description in a single line'''
@@ -263,7 +271,7 @@ class TypeDesc(object):
         # const->reference->const->int = const const int &
         # const->reference->int = const int &
         name = str(self.name)
-        mods = self.modifiers
+        mods = self.mods
 
         desc = []
         # Initial const applies to the var ifself, other consts apply to the pointee
@@ -276,36 +284,42 @@ class TypeDesc(object):
             desc.append('const')
             mods = mods[0:-1]
 
-        if self.scopes:
-            name = '::'.join(self.scopes)+'::' + name
+        if self.scps:
+            name = '::'.join(self.scps)+'::' + name
         desc.append(name)
 
         if len(mods):
-            desc.append(''.join(tag2str[mod] for mod in mods))
+            desc.append(''.join(tag2mod[mod] for mod in mods))
 
-        if self.dimensions:
+        if self.dims:
             dims = ''.join('[%s]' % (str(dim) if dim > 0 else '',)
-                for dim in self.dimensions)
+                for dim in self.dims)
         else:
             dims = ''
 
         return ' '.join(desc)+dims
 
 def DIE_name(die):
-    return bytes2str(die.attributes['DW_AT_name'].value)
+    return bytes2str(die.attributes['DW_AT_name'].value) 
 
-def safe_DIE_name(die, default = ''):
-    return bytes2str(die.attributes['DW_AT_name'].value) if DIE_has_type(die) else default
+def DIE_opt_name(die, default = ''):
+    return DIE_name(die) if DIE_has_name(die) else default
 
 def DIE_type(die):
     return die.get_DIE_from_attribute('DW_AT_type')
 
+def DIE_has_name(die):
+    return DIE_has_attr(die, 'DW_AT_name')
+
 def DIE_has_type(die):
-    return 'DW_AT_type' in die.attributes
+    return DIE_has_attr(die, 'DW_AT_type')
+    
+def DIE_has_attr(die, aname):
+    return aname in die.attributes
 
 class ClassDesc(object):
     def __init__(self):
-        self.scopes = ()
+        self.scps = ()
         self.const_member = False
 
 def get_class_spec_if_member(func_spec, the_func):
@@ -313,21 +327,21 @@ def get_class_spec_if_member(func_spec, the_func):
         this_param = the_func.get_DIE_from_attribute('DW_AT_object_pointer')
         this_type = parse_var(this_param)
         class_spec = ClassDesc()
-        class_spec.scopes = this_type.scopes + (this_type.name,)
-        class_spec.const_member = any(('const', 'pointer') == this_type.modifiers[i:i+2]
-            for i in range(len(this_type.modifiers))) # const -> pointer -> const for this arg of const
+        class_spec.scps = this_type.scps + (this_type.name,)
+        class_spec.const_member = any(('const', 'pointer') == this_type.mods[i:i+2]
+            for i in range(len(this_type.mods))) # const -> pointer -> const for this arg of const
         return class_spec
 
     # Check the parent element chain - could be a class
     parent = func_spec.get_parent()
 
-    scopes = []
-    while parent.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_namespace'):
-        scopes.insert(0, DIE_name(parent))
+    scps = []
+    while parentdie.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_namespace'):
+        scps.insert(0, DIE_name(parent))
         parent = parent.get_parent()
-    if scopes:
+    if scps:
         cs = ClassDesc()
-        cs.scopes = tuple(scopes)
+        cs.scps = tuple(scps)
         return cs
 
     return None
@@ -345,49 +359,56 @@ def format_function_param(param_spec, param):
     else: # unspecified_parameters AKA variadic
         return '...'
 
-def DIE_is_ptr_to_member_struct(type_die):
-    if type_die.tag == 'DW_TAG_structure_type':
-        members = tuple(die for die in type_die.iter_children() if die.tag == 'DW_TAG_member')
-        return len(members) == 2 and safe_DIE_name(members[0]) == '__pfn' and safe_DIE_name(members[1]) == '__delta'
+def DIE_is_ptr_to_member_struct(tdie):
+    if tdie.tag == 'DW_TAG_structure_type':
+        members = tuple(die for die in tdie.iter_children() if die.tag == 'DW_TAG_member')
+        return len(members) == 2 and DIE_opt_name(members[0]) == '__pfn' and DIE_opt_name(members[1]) == '__delta'
     return False
 
-def _array_subtype_size(sub):
-    if 'DW_AT_upper_bound' in sub.attributes:
-        return sub.attributes['DW_AT_upper_bound'].value + 1
-    if 'DW_AT_count' in sub.attributes:
-        return sub.attributes['DW_AT_count'].value
+def _array_size(die):
+    if 'DW_AT_upper_bound' in die.attributes:
+        return die.attributes['DW_AT_upper_bound'].value + 1
+    if 'DW_AT_count' in die.attributes:
+        return die.attributes['DW_AT_count'].value
     else:
         return -1
 
 def pr_variable(self, die):
     self.pr_ln(st_var(die))
 
-def pr_structure_type(self, die):
-    self.pr_ln('struct %s {' % DIE_name(die))
-    self.inc_level()
+def pr_user_type(self, die):
+    # skip anonymous user types at outer nesting
+    # they will be printed in a named context
+    if not DIE_has_name(die) and self.nst_lvl == 0:
+        return
+
+    self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], DIE_opt_name(die, '/*anonymous*/')))
+    self.ind_lvl += 1
+    self.nst_lvl += 1
     for ch in die.iter_children():
         self.pr_die(ch)
         self.pr(';')
-    self.dec_level()
+    self.nst_lvl -= 1
+    self.ind_lvl -= 1
     self.pr_ln('};')
 
 def pr_subprogram(self, die):
     self.pr_ln('%s %s (' % (st_var(die), DIE_name(die)))
-    self.inc_level()
+    self.ind_lvl += 1
     ch_l = [ch for ch in die.iter_children()]
     for ch in ch_l:
         self.pr_die(ch)
         if  ch != ch_l[-1]:
             self.pr(',')
-    self.dec_level()
+    self.ind_lvl -= 1
     self.pr_ln(');')
 
 def pr_type_unit(self, die):
     self.pr_children(die)
 
 def pr_compile_unit(self, die):
-    self.pr_ln(self.pr_attr(die, 'DW_AT_producer'))
-    self.pr_ln(self.pr_attr(die, 'DW_AT_name'))
+    self.pr_attr(die, 'DW_AT_producer')
+    self.pr_attr(die, 'DW_AT_name')
     self.pr_children(die)
 
 # dispatch table for pr_<x>(self, die) functions
@@ -396,7 +417,7 @@ def pr_compile_unit(self, die):
 deftag2pr_func = dict(
   DW_TAG_null                     = pr_exit,
   #DW_TAG_array_type 
-  #DW_TAG_class_type
+  DW_TAG_class_type               = pr_user_type,
   DW_TAG_entry_point              = pr_exit,
   #DW_TAG_enumeration_type         = pr_enumeration_type,
   DW_TAG_formal_parameter         = pr_variable,
@@ -408,10 +429,10 @@ deftag2pr_func = dict(
   #DW_TAG_reference_type           =
   DW_TAG_compile_unit             = pr_compile_unit, 
   #DW_TAG_string_type              = 
-  DW_TAG_structure_type           = pr_structure_type,
+  DW_TAG_structure_type           = pr_user_type,
   #DW_TAG_subroutine_type          = 
   #DW_TAG_typedef                  = pr_typedef,
-  #DW_TAG_union_type
+  DW_TAG_union_type               = pr_user_type,
   #DW_TAG_unspecified_parameters   = 
   #DW_TAG_variant                  = 
   DW_TAG_common_block             = pr_exit,
@@ -460,9 +481,7 @@ deftag2pr_func = dict(
   #DW_TAG_rvalue_reference_type    = 
 )
 
-
 class DumpHeader:
-
     def __init__(self, ifile, ofile, args):
         ''' dump header from the .debug_info section.
             ifile:
@@ -471,12 +490,13 @@ class DumpHeader:
             ofile:
                 output stream to write to
         '''
-        self.ifile = ifile
-        self.ofile = ofile
-        self.level = 0
-        self.args  = args
-        elffile = ELFFile(self.ifile)
+        self.ifile   = ifile
+        self.ofile   = ofile
+        self.ind_lvl = 0       # indentation level
+        self.nst_lvl = 0       # nesting level of user types
+        self.args    = args
 
+        elffile      = ELFFile(self.ifile)
         if not elffile.has_dwarf_info():
             print('ERROR: file has no DWARF info')
             sys.exit(1)
@@ -538,20 +558,14 @@ class DumpHeader:
             self.pr_attr(die, attrname)
 
     def pr_children(self, die):        
-        self.inc_level()
+        self.ind_lvl += 1
         for ch in die.iter_children():
             self.pr_die(ch) 
-        self.dec_level()
-
-    def inc_level(self, lvl = 1):
-        self.level += lvl
- 
-    def dec_level(self, lvl = 1):
-        self.level = max(0, self.level - lvl)
+        self.ind_lvl -= 1
  
     def pr_ln(self, txt):
         '''returns txt on a new line with the current indentation'''
-        self.pr('\n%*s%s' % (2*self.level, '', txt))
+        self.pr('\n%*s%s' % (2*self.ind_lvl, '', txt))
 
     def pr(self, txt):
         '''writes txt to output file'''
@@ -589,7 +603,6 @@ def main(stream=None):
         dumper = DumpHeader(ifile, ofile, args)
         dumper.dump_header()
 
-
 def profile_main():
     progbase = PROG[:-3]
     PROFFILE = progbase+ '.profile'
@@ -600,7 +613,6 @@ def profile_main():
     import pstats
     p = pstats.Stats(PROFFILE)
     p.sort_stats('cumulative').print_stats(25)
-
 
 #-------------------------------------------------------------------------------
 if __name__ == '__main__':
