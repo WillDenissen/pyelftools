@@ -321,7 +321,7 @@ def st_subprogram(self, die):
     return res
 
 def st_type_unit(self, die):
-    res = die.tag
+    res = self.st_children(die)
     return res
 
 def st_compile_unit(self, die):
@@ -400,7 +400,7 @@ deftag2st_func = dict(
   #DW_TAG_mutable_type             = 
   #DW_TAG_condition                = 
   #DW_TAG_shared_type              = 
-  #DW_TAG_type_unit                = st_type_unit,
+  DW_TAG_type_unit                = st_type_unit,
   #DW_TAG_rvalue_reference_type    = 
 
   #DW_TAG_lo_user                  = 
