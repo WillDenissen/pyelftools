@@ -24,18 +24,6 @@ from elftools.dwarf.enums import ENUM_DW_ATE
 
 PROG = 'stub2hdr.py'
 
-tag2mod = dict(
-    DW_TAG_pointer_type   = '*',
-    DW_TAG_reference_type = '&',
-    DW_TAG_const_type     = 'const',
-)
-
-tag2usr_cls = dict(
-    DW_TAG_structure_type = 'struct',
-    DW_TAG_union_type     = 'union',
-    DW_TAG_class_type     = 'class',
-)
-
 enc2str = dict(
     # DW_ATE_address         = '',
     # DW_ATE_boolean         = '',
@@ -143,17 +131,48 @@ def st_var(vdie):
     '''
     return str(parse_var(vdie))
 
-def peel_off_mods(tdie):
-    mod_l = []
+def strip_mods(tdie):
+    mods = []
     # peel off the type modifiers from tdie
     while tdie.tag in ('DW_TAG_const_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type'):
-        mod_l.insert(0, tdie.tag)
-        if not DIE_has_type(tdie): # void* is encoded as a pointer to nothing
-            t.name = 'void'
-            t.mods = tuple(mod_l)
-            return t
+        mods.insert(0, tdie.tag)
         tdie = DIE_type(tdie)
-    return tdie, tuple(mod_l)
+    return tdie, mods
+
+def get_scopes(tdie):
+    prnt = tdie.get_parent()
+    scps = list()
+    while prnt.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_union_type', 'DW_TAG_namespace'):
+        scps.insert(0, DIE_opt_name(prnt, '/*anonymous*/'))
+        prnt = prnt.get_parent()
+    return scps
+
+def strip_prefix(tdie):
+    if tdie.tag == 'DW_TAG_ptr_to_member_type':
+        prfx = DIE_name(tdie.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
+        tdie = DIE_type(tdie)
+    elif 'DW_AT_object_pointer' in tdie.attributes: # Older compiler... Subroutine, but with an object pointer
+        prfx = DIE_name(DIE_type(DIE_type(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
+    else:
+        prfx = ''
+
+    return tdie, prfx
+
+def st_params(tdie):
+    params = tuple(st_param(pdie, pdie) for pdie in tdie.iter_children() 
+    if pdie.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and 'DW_AT_artificial' not in pdie.attributes)
+    return ', '.join(params)
+
+def st_return(tdie):
+    if DIE_has_type(tdie):
+        rtrn_td = parse_var(tdie)
+        rtrn_st = str(rtrn_td)
+        if not rtrn_td.is_pointer:
+            rtrn_st += ' '
+    else:
+        rtrn_st = 'void '
+    return rtrn_st
+    
 
 def parse_var(vdie):
     '''parse a DIE that describes a variable, a parameter, or a member
@@ -162,82 +181,69 @@ def parse_var(vdie):
 
     Does not follow named struct/union/class/type defs.
     '''
-    t = TypeDesc()
 
-    if not DIE_has_type(vdie):
-        return t
-
+    # TODO proper injection of name into TypeDesc
+    td = TypeDesc()
     name = DIE_name(vdie)
-    tdie = DIE_type(vdie)
-
-    tdie, t.mods = peel_off_mods(tdie)
 
     if not DIE_has_type(vdie):
-        return t
+        return td
+
+    tdie = DIE_type(vdie)
+    tdie, td.mods = strip_mods(tdie)
+
+    if td.is_pointer and not DIE_has_type(tdie): # void* is encoded as a pointer to nothing
+        return td
 
     # From this point on, tdie doesn't change
     if tdie.tag in ('DW_TAG_ptr_to_member_type', 'DW_TAG_subroutine_type'):
-        if tdie.tag == 'DW_TAG_ptr_to_member_type':
-            ptr_prefix = DIE_name(tdie.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
-            tdie = DIE_type(tdie)
-        elif 'DW_AT_object_pointer' in tdie.attributes: # Older compiler... Subroutine, but with an object pointer
-            ptr_prefix = DIE_name(DIE_type(DIE_type(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
-        else: # Not a pointer to member
-            ptr_prefix = ''
+        tdie, prfx_st = strip_prefix(tdie)
 
         if tdie.tag == 'DW_TAG_subroutine_type':
-            params = tuple(format_function_param(p, p) for p in tdie.iter_children() 
-            if p.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and 'DW_AT_artificial' not in p.attributes)
-            params = ', '.join(params)
-            if DIE_has_type(tdie):
-                rtrn_type = parse_var(tdie)
-                is_pointer = rtrn_type.mods and rtrn_type.mods[-1] == 'DW_TAG_pointer_type'
-                rtrn_type = str(rtrn_type)
-                if not is_pointer:
-                    rtrn_type += ' '
-            else:
-                rtrn_type = 'void '
+            params_st = st_params(tdie)
+            rtrn_st   = st_return(tdie)
 
-            if len(mod_l) and mod_l[-1] == 'DW_TAG_pointer_type':
-                mod_l.pop()
-                t.mods = tuple(mod_l)
-                t.name = '%s(%s*)(%s)' % (rtrn_type, ptr_prefix, params)
+            if td.is_pointer:
+                td.mods.pop()
+                td.name = '%s(%s*)(%s)' % (rtrn_st, prfx_st, params_st)
             else:
-                t.name = '%s(%s)' % (rtrn_type, params)
-            return t
+                td.name = '%s(%s)' % (rtrn_st, params_st)
+            return td
     elif DIE_is_ptr_to_member_struct(tdie):
         dt = parse_var(next(tdie.iter_children())) # The first element is pfn, a function pointer with a this
-        dt.modifiers = tuple(dt.modifiers[:-1]) # Pop the extra pointer
-        dtdie.tag = 'DW_TAG_ptr_to_member_type' # Not a function pointer per se
+        dt.mods.pop() # Pop the extra pointer
+        dt.tag = 'DW_TAG_ptr_to_member_type' # Not a function pointer per se
         return dt
     elif tdie.tag == 'DW_TAG_array_type':
-        t.dims = (_array_size(sub)
+        td.dims = (_dim_size(sub)
             for sub in tdie.iter_children()
             if sub.tag == 'DW_TAG_subrange_type')
-        t.name = st_var(tdie)
-        return t
+        td.name = st_var(tdie)
+        return td
     elif tdie.tag == 'DW_TAG_base_type':
-        t.name = DIE_name(tdie) + ' ' + name
-        return t
-    elif tdie.tag in ('DW_TAG_structure_type', 'DW_TAG_union_type'):        
-        t.name = '%s %s %s' % (tag2usr_cls[tdie.tag], DIE_name(tdie), name)
-        return t
+        td.name = '%s %s' % (DIE_name(tdie), name)
+        return td
+    elif tdie.tag == 'DW_TAG_structure_type':        
+        td.name = 'struct %s %s' % (DIE_name(tdie), name)
+        return td
+    elif tdie.tag == 'DW_TAG_union_type':        
+        td.name = 'union %s %s' % (DIE_name(tdie), name)
+        return td
+    elif tdie.tag in ('DW_TAG_typedef_type', 'DW_class_type'):        
+        td.name = '%s %s' % (DIE_name(tdie), name)
+        return td
 
     # Now the nonfunction types
     # Blank name is sometimes legal (unnamed unions, etc)
+    td.name = DIE_opt_name(tdie, '/*anonymous*/')
+    td.scps = get_scopes(tdie)
+    return td
 
-    t.name = DIE_opt_name(tdie, '/*anonymous*/')
-
-    # Check the nesting - important for parameters
-    parent = tdie.get_parent()
-    scps = list()
-    while parent.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_union_type', 'DW_TAG_namespace'):
-        scps.insert(0, DIE_opt_name(parent, '/*%s*/' % parent.tag))
-        # If unnamed scope, fall back to scope type - like 'structure '
-        parent = parent.get_parent()
-    t.scps = tuple(scps)
-
-    return t
+tag2mod = dict(
+    DW_TAG_pointer_type   = '*',
+    DW_TAG_reference_type = '&',
+    DW_TAG_const_type     = 'const',
+)
 
 class TypeDesc(object):
     ''' Encapsulates a description of a datatype, as parsed from DWARF DIEs.
@@ -251,21 +257,24 @@ class TypeDesc(object):
         scps - a collection of struct/class/namespace names, parents of the
             real type DIE
 
-        tag - the tag of the real type DIE, stripped of initial DW_TAG_ and
-            final _type
+        tag - the tag of the real type DIE
 
         dims - the collection of array dimensions, if the type is an array. 
             -1 means an array of unknown dimension.
 
     '''
+
     def __init__(self):
         self.name = 'void'
-        self.mods = () # Reads left to right
-        self.scps = () # Reads left to right
-        self.dims = None
+        self.mods = [] # Reads left to right
+        self.scps = [] # Reads left to right
+        self.dims = []
 
     def __str__(self):
-        '''Returns the C/C++ type description in a single line'''
+        '''Returns the C/C++ type description in a single line
+        
+           (<scp0>::...::<scpn>::)?<name>([<dim0>]...[dimn])?
+        '''
         # Some reference points from dwarfdump:
         # const->pointer->const->char = const char *const
         # const->reference->const->int = const const int &
@@ -299,8 +308,16 @@ class TypeDesc(object):
 
         return ' '.join(desc)+dims
 
+    @property
+    def is_pointer(self):
+        return len(self.mods) and self.mods[-1] == 'DW_TAG_pointer_type'
+    
+
+def DIE_string(die, aname):
+    return bytes2str(die.attributes[aname].value) 
+
 def DIE_name(die):
-    return bytes2str(die.attributes['DW_AT_name'].value) 
+    return DIE_string(die, 'DW_AT_name') 
 
 def DIE_opt_name(die, default = ''):
     return DIE_name(die) if DIE_has_name(die) else default
@@ -325,28 +342,28 @@ class ClassDesc(object):
 def get_class_spec_if_member(func_spec, the_func):
     if 'DW_AT_object_pointer' in the_func.attributes:
         this_param = the_func.get_DIE_from_attribute('DW_AT_object_pointer')
-        this_type = parse_var(this_param)
-        class_spec = ClassDesc()
-        class_spec.scps = this_type.scps + (this_type.name,)
-        class_spec.const_member = any(('const', 'pointer') == this_type.mods[i:i+2]
-            for i in range(len(this_type.mods))) # const -> pointer -> const for this arg of const
-        return class_spec
+        this_td = parse_var(this_param)
+        cd = ClassDesc()
+        cd.scps = this_td.scps + (this_td.name,)
+        cd.const_member = any(('const', 'pointer') == this_td.mods[i:i+2]
+            for i in range(len(this_td.mods))) # const -> pointer -> const for this arg of const
+        return cd
 
     # Check the parent element chain - could be a class
     parent = func_spec.get_parent()
 
     scps = []
-    while parentdie.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_namespace'):
+    while parent.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_namespace'):
         scps.insert(0, DIE_name(parent))
         parent = parent.get_parent()
     if scps:
         cs = ClassDesc()
-        cs.scps = tuple(scps)
+        cs.scps = scps
         return cs
 
     return None
 
-def format_function_param(param_spec, param):
+def st_param(param_spec, param):
     if param_spec.tag == 'DW_TAG_formal_parameter':
         if 'DW_AT_name' in param.attributes:
             name = DIE_name(param)
@@ -365,7 +382,7 @@ def DIE_is_ptr_to_member_struct(tdie):
         return len(members) == 2 and DIE_opt_name(members[0]) == '__pfn' and DIE_opt_name(members[1]) == '__delta'
     return False
 
-def _array_size(die):
+def _dim_size(die):
     if 'DW_AT_upper_bound' in die.attributes:
         return die.attributes['DW_AT_upper_bound'].value + 1
     if 'DW_AT_count' in die.attributes:
@@ -375,6 +392,12 @@ def _array_size(die):
 
 def pr_variable(self, die):
     self.pr_ln(st_var(die))
+
+tag2usr_cls = dict(
+    DW_TAG_structure_type = 'struct',
+    DW_TAG_union_type     = 'union',
+    DW_TAG_class_type     = 'class',
+)
 
 def pr_user_type(self, die):
     # skip anonymous user types at outer nesting
@@ -407,8 +430,8 @@ def pr_type_unit(self, die):
     self.pr_children(die)
 
 def pr_compile_unit(self, die):
-    self.pr_attr(die, 'DW_AT_producer')
-    self.pr_attr(die, 'DW_AT_name')
+    self.pr_ln('// produced by: %s' % DIE_string(die, 'DW_AT_producer'))
+    self.pr_ln('// symbols of : %s' % DIE_name(die))
     self.pr_children(die)
 
 # dispatch table for pr_<x>(self, die) functions
@@ -431,7 +454,7 @@ deftag2pr_func = dict(
   #DW_TAG_string_type              = 
   DW_TAG_structure_type           = pr_user_type,
   #DW_TAG_subroutine_type          = 
-  #DW_TAG_typedef                  = pr_typedef,
+  DW_TAG_typedef                  = pr_variable,
   DW_TAG_union_type               = pr_user_type,
   #DW_TAG_unspecified_parameters   = 
   #DW_TAG_variant                  = 
