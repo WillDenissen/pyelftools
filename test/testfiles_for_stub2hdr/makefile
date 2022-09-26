@@ -4,7 +4,7 @@ check: genhdrs
 	cd out; gcc -c *.h && echo ALL PASSED
 
 genhdrs: bldstubs
-	python3 ../../scripts/stub2hdr.py -o out src/bld
+	python3 ../../scripts/stub2hdr.py -V -o out src/bld
 
 bldstubs:
 	cd src; make stubs

@@ -12,6 +12,7 @@
 #-------------------------------------------------------------------------------
 import argparse
 import sys, os
+from typing import DefaultDict
 
 # For running from development directory. It should take precedence over the
 # installed pyelftools.
@@ -55,12 +56,11 @@ def pr_exit(self, die):
 def pr_skip(self, die):
     pass
 
-
 def st_subrange_type(self, die):
     if 'DW_AT_upper_bound' in die.attributes:
-        res = '[%s]' % (die.attributes['DW_AT_upper_bound'].value + 1)
+        res = '[%s]' % (die.attributes['DW_AT_upper_bound'] + 1, )
     elif 'DW_AT_count' in die.attributes:
-        res = '[%s]' % die.attributes['DW_AT_count'].value
+        res = '[%s]' % (die.attributes['DW_AT_upper_bound'], )
     else:
         res = '[]'
 
@@ -86,16 +86,16 @@ def get_scopes(tdie):
     prnt = tdie.get_parent()
     scps = list()
     while prnt.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_union_type', 'DW_TAG_namespace'):
-        scps.insert(0, DIE_opt_name(prnt, '/*anonymous*/'))
+        scps.insert(0, st_opt_name(prnt))
         prnt = prnt.get_parent()
     return scps
 
 def strip_prefix(tdie):
     if tdie.tag == 'DW_TAG_ptr_to_member_type':
-        prfx = DIE_name(tdie.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
+        prfx = st_name(tdie.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
         tdie = DIE_type(tdie)
     elif 'DW_AT_object_pointer' in tdie.attributes: # Older compiler... Subroutine, but with an object pointer
-        prfx = DIE_name(DIE_type(DIE_type(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
+        prfx = st_name(DIE_type(DIE_type(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
     else:
         prfx = ''
 
@@ -127,7 +127,7 @@ def parse_var(vdie):
 
     # TODO proper injection of name into TypeDesc
     td = TypeDesc()
-    name = DIE_name(vdie)
+    name = st_opt_name(vdie, '')
 
     if not DIE_has_type(vdie):
         return td
@@ -158,27 +158,30 @@ def parse_var(vdie):
         dt.tag = 'DW_TAG_ptr_to_member_type' # Not a function pointer per se
         return dt
     elif tdie.tag == 'DW_TAG_array_type':
-        td.dims = (_dim_size(sub)
-            for sub in tdie.iter_children()
-            if sub.tag == 'DW_TAG_subrange_type')
+        td.dims = (_dim_size(dim)
+            for dim in tdie.iter_children()
+            if dim.tag == 'DW_TAG_subrange_type')
         td.name = st_var(tdie)
         return td
     elif tdie.tag == 'DW_TAG_base_type':
-        td.name = '%s %s' % (DIE_name(tdie), name)
+        td.name = '%s %s' % (st_name(tdie), name)
+        return td
+    elif tdie.tag == 'DW_TAG_enumeration_type':        
+        td.name = 'enum %s %s' % (st_name(tdie), name)
         return td
     elif tdie.tag == 'DW_TAG_structure_type':        
-        td.name = 'struct %s %s' % (DIE_name(tdie), name)
+        td.name = 'struct %s %s' % (st_name(tdie), name)
         return td
     elif tdie.tag == 'DW_TAG_union_type':        
-        td.name = 'union %s %s' % (DIE_name(tdie), name)
+        td.name = 'union %s %s' % (st_name(tdie), name)
         return td
     elif tdie.tag in ('DW_TAG_typedef_type', 'DW_class_type'):        
-        td.name = '%s %s' % (DIE_name(tdie), name)
+        td.name = '%s %s' % (st_name(tdie), name)
         return td
 
     # Now the nonfunction types
     # Blank name is sometimes legal (unnamed unions, etc)
-    td.name = DIE_opt_name(tdie, '/*anonymous*/')
+    td.name = st_opt_name(tdie)
     td.scps = get_scopes(tdie)
     return td
 
@@ -255,15 +258,68 @@ class TypeDesc(object):
     def is_pointer(self):
         return len(self.mods) and self.mods[-1] == 'DW_TAG_pointer_type'
     
+def st_attr_dflt(val):
+    return '%s' % val
 
-def DIE_string(die, aname):
-    return bytes2str(die.attributes[aname].value) 
+def st_attr_string(val):
+  return bytes2str(val)
 
-def DIE_name(die):
-    return DIE_string(die, 'DW_AT_name') 
+def st_attr_ref(val):
+      return '<0x%08x>' % val
 
-def DIE_opt_name(die, default = ''):
-    return DIE_name(die) if DIE_has_name(die) else default
+def st_attr_hex(val):
+  return '0x%x' % (val)
+
+
+def st_attr_hex_addr(val):
+  return '<0x%x>' % val
+
+
+def st_attr_split_64bit(val):
+  lo_w =  val        & 0xFFFFFFFF
+  hi_w = (val >> 32) & 0xFFFFFFFF
+
+  return '0x%x 0x%x' % (lo_w, hi_w)
+
+
+def st_attr_block(val):
+  s = '%s byte block: ' % len(val)
+  s += ' '.join('%02x' % item for item in val)
+  return s
+
+# dispatch table for st_attr_<x>(val) functions
+form2st_attr = dict(
+  DW_FORM_ref1       = st_attr_ref,
+  DW_FORM_ref2       = st_attr_ref,
+  DW_FORM_ref4       = st_attr_ref,
+  DW_FORM_ref8       = st_attr_split_64bit,
+  DW_FORM_ref_udata  = st_attr_ref,        
+  DW_FORM_ref_addr   = st_attr_hex_addr,
+  DW_FORM_data4      = st_attr_hex,
+  DW_FORM_data8      = st_attr_split_64bit,
+  DW_FORM_addr       = st_attr_hex,
+  DW_FORM_sec_offset = st_attr_hex,
+  DW_FORM_flag       = st_attr_dflt,
+  DW_FORM_data1      = st_attr_dflt,
+  DW_FORM_data2      = st_attr_dflt,
+  DW_FORM_sdata      = st_attr_dflt,
+  DW_FORM_udata      = st_attr_dflt,
+  DW_FORM_string     = st_attr_string,
+  DW_FORM_strp       = st_attr_string,
+  DW_FORM_block1     = st_attr_block,
+  DW_FORM_block2     = st_attr_block,
+  DW_FORM_block4     = st_attr_block,
+  DW_FORM_block      = st_attr_block,
+)
+
+def st_attr(attr):
+    return form2st_attr.get(attr.form, st_attr_dflt)(attr.value) 
+
+def st_name(die):
+    return st_attr(die.attributes['DW_AT_name'])
+
+def st_opt_name(die, default = '/* no name */'):
+    return st_name(die) if DIE_has_name(die) else default
 
 def DIE_type(die):
     return die.get_DIE_from_attribute('DW_AT_type')
@@ -297,7 +353,7 @@ def get_class_spec_if_member(func_spec, the_func):
 
     scps = []
     while parent.tag in ('DW_TAG_class_type', 'DW_TAG_structure_type', 'DW_TAG_namespace'):
-        scps.insert(0, DIE_name(parent))
+        scps.insert(0, st_name(parent))
         parent = parent.get_parent()
     if scps:
         cs = ClassDesc()
@@ -309,9 +365,9 @@ def get_class_spec_if_member(func_spec, the_func):
 def st_param(param_spec, param):
     if param_spec.tag == 'DW_TAG_formal_parameter':
         if 'DW_AT_name' in param.attributes:
-            name = DIE_name(param)
+            name = st_name(param)
         elif 'DW_AT_name' in param_spec.attributes:
-            name = DIE_name(param_spec)
+            name = st_name(param_spec)
         else:
             name = None
         type = parse_var(param_spec)
@@ -322,7 +378,7 @@ def st_param(param_spec, param):
 def DIE_is_ptr_to_member_struct(tdie):
     if tdie.tag == 'DW_TAG_structure_type':
         members = tuple(die for die in tdie.iter_children() if die.tag == 'DW_TAG_member')
-        return len(members) == 2 and DIE_opt_name(members[0]) == '__pfn' and DIE_opt_name(members[1]) == '__delta'
+        return len(members) == 2 and st_opt_name(members[0]) == '__pfn' and st_opt_name(members[1]) == '__delta'
     return False
 
 def _dim_size(die):
@@ -345,13 +401,31 @@ tag2usr_cls = dict(
     DW_TAG_class_type     = 'class',
 )
 
+def pr_enumerator(self, die):
+    name = st_name(die)
+    if 'DW_AT_const_value' in die.attributes:
+        self.pr_ln('%-50s = %s' % (name, st_attr(die.attributes['DW_AT_const_value'])))
+    else:
+        self.pr_ln('%-50s' % name)
+
+def pr_enumeration_type(self, die):
+    self.pr_ln('enum %s {' % st_opt_name(die))
+    ch_l = [ch for ch in die.iter_children()]
+    self.ind_lvl += 1
+    for ch in ch_l:
+        self.pr_def(ch)
+        if ch != ch_l[-1]:
+            self.pr(',')
+    self.ind_lvl -= 1
+    self.pr_ln('};')
+
 def pr_user_type(self, die):
     # skip anonymous user types at outer nesting
     # they will be printed in a named context
     if not DIE_has_name(die) and self.nst_lvl == 0:
         return
 
-    self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], DIE_opt_name(die, '/*anonymous*/')))
+    self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], st_opt_name(die)))
     self.ind_lvl += 1
     self.nst_lvl += 1
     for ch in die.iter_children():
@@ -361,7 +435,7 @@ def pr_user_type(self, die):
     self.pr_ln('};')
 
 def pr_subprogram(self, die):
-    self.pr_ln('%s %s (' % (st_var(die), DIE_name(die)))
+    self.pr_ln('%s %s (' % (st_var(die), st_name(die)))
     self.ind_lvl += 1
     ch_l = [ch for ch in die.iter_children()]
     for ch in ch_l:
@@ -375,8 +449,8 @@ def pr_type_unit(self, die):
     self.pr_children(die)
 
 def pr_compile_unit(self, die):
-    self.pr_ln('// produced by: %s' % DIE_string(die, 'DW_AT_producer'))
-    self.pr_ln('// symbols of : %s' % DIE_name(die))
+    self.pr_ln('// produced by: %s' % st_attr(die.attributes['DW_AT_producer']))
+    self.pr_ln('// symbols of : %s' % st_name(die))
     self.pr_children(die)
 
 # dispatch table for pr_<x>(self, die) functions
@@ -387,7 +461,7 @@ deftag2pr_func = dict(
   #DW_TAG_array_type 
   DW_TAG_class_type               = pr_user_type,
   DW_TAG_entry_point              = pr_exit,
-  #DW_TAG_enumeration_type         = pr_enumeration_type,
+  DW_TAG_enumeration_type         = pr_enumeration_type,
   DW_TAG_formal_parameter         = pr_variable,
   DW_TAG_imported_declaration     = pr_exit,
   DW_TAG_label                    = pr_exit,
@@ -417,7 +491,7 @@ deftag2pr_func = dict(
   DW_TAG_catch_block              = pr_exit,
   #DW_TAG_const_type               = 
   #DW_TAG_constant                 = 
-  #DW_TAG_enumerator               = pr_enumerator,
+  DW_TAG_enumerator               = pr_enumerator,
   #DW_TAG_file_type                = 
   #DW_TAG_friend                   = 
   #DW_TAG_namelist                 = 
@@ -432,7 +506,7 @@ deftag2pr_func = dict(
   #DW_TAG_thrown_type              = 
   DW_TAG_try_block                = pr_exit,
   #DW_TAG_variant_part             = 
-  DW_TAG_variable                  = pr_variable, 
+  DW_TAG_variable                 = pr_variable, 
   #DW_TAG_volatile_type            = 
   #DW_TAG_dwarf_procedure          = 
   #DW_TAG_restrict_type            = 
@@ -509,7 +583,7 @@ class DumpHeader:
     def pr_def(self, die):
         ''' Prints the definition expressed by the DIE by dispatching it to the proper pr_???(self, die) function.
             die:
-                die to dump
+                die to print definition of.
         '''
         if die.tag in deftag2pr_func:
             if self.args.verbose:
@@ -526,14 +600,15 @@ class DumpHeader:
             die.tag, die.size, die.has_children))
 
     def pr_attr(self, die, aname):
-        aval = die.attributes[aname]
-        if not self.args.verbose:
-            aval = aval.value
-        self.pr_ln('//   %-18s:  %s' % (aname, aval))
+        attr = die.attributes[aname]
+        if  self.args.verbose:
+            self.pr_ln('//   %-18s:  %s' % (aname, st_attr(attr)))
+        else:
+            self.pr_ln('// %s' % attr)
 
     def pr_attrs(self, die):
-        for attrname in die.attributes:
-            self.pr_attr(die, attrname)
+        for aname in die.attributes:
+            self.pr_attr(die, aname)
 
     def pr_children(self, die):        
         self.ind_lvl += 1

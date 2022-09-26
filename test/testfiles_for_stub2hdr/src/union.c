@@ -3,4 +3,4 @@ union aunion_t {
     float y;
 };
 
-void afunc(union aunion_t p) {}
+union aunion_t p;

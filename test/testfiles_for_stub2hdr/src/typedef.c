@@ -1,8 +1,3 @@
-struct atype_t {
-    int   i;
-    float y;
-};
+typedef int my_int;
 
-typedef struct atype_t my_type;
-
-void afunc(my_type p) {}
+//WIP my_int p;

@@ -3,4 +3,4 @@ struct astruct_t {
     float y;
 };
 
-void afunc(struct astruct_t p) {}
+struct astruct_t p;

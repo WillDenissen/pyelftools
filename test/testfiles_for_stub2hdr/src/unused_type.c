@@ -1,11 +1,10 @@
-struct istruct_t {
-    double iz;
+struct unused_t {
+    double d;
 };
 
 struct astruct_t {
     int   i;
     float y;
-    struct istruct_t z;
 };
 
 struct astruct_t p;
