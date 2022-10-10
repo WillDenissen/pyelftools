@@ -79,7 +79,9 @@ def strip_mods(tdie):
     # peel off the type modifiers from tdie
     while tdie.tag in ('DW_TAG_const_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type'):
         mods.insert(0, tdie.tag)
-        tdie = DIE_type(tdie)
+        if not DIE_has_type(tdie):
+            return None, mods
+        tdie = DIE_typeof(tdie)
     return tdie, mods
 
 def get_scopes(tdie):
@@ -93,9 +95,9 @@ def get_scopes(tdie):
 def strip_prefix(tdie):
     if tdie.tag == 'DW_TAG_ptr_to_member_type':
         prfx = st_name(tdie.get_DIE_from_attribute('DW_AT_containing_type')) + '::'
-        tdie = DIE_type(tdie)
+        tdie = DIE_typeof(tdie)
     elif 'DW_AT_object_pointer' in tdie.attributes: # Older compiler... Subroutine, but with an object pointer
-        prfx = st_name(DIE_type(DIE_type(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
+        prfx = st_name(DIE_typeof(DIE_typeof(tdie.get_DIE_from_attribute('DW_AT_object_pointer')))) + '::'
     else:
         prfx = ''
 
@@ -132,7 +134,7 @@ def parse_var(vdie):
     if not DIE_has_type(vdie):
         return td
 
-    tdie = DIE_type(vdie)
+    tdie = DIE_typeof(vdie)
     tdie, td.mods = strip_mods(tdie)
 
     if td.is_pointer and not DIE_has_type(tdie): # void* is encoded as a pointer to nothing
@@ -321,14 +323,14 @@ def st_name(die):
 def st_opt_name(die, default = '/* no name */'):
     return st_name(die) if DIE_has_name(die) else default
 
-def DIE_type(die):
+def DIE_typeof(die):
     return die.get_DIE_from_attribute('DW_AT_type')
 
 def DIE_has_name(die):
     return DIE_has_attr(die, 'DW_AT_name')
 
 def DIE_has_type(die):
-    return DIE_has_attr(die, 'DW_AT_type')
+    return die and DIE_has_attr(die, 'DW_AT_type')
     
 def DIE_has_attr(die, aname):
     return aname in die.attributes
@@ -604,7 +606,7 @@ class DumpHeader:
         if  self.args.verbose:
             self.pr_ln('//   %-18s:  %s' % (aname, st_attr(attr)))
         else:
-            self.pr_ln('// %s' % attr)
+            self.pr_ln('// %s' % (attr,))
 
     def pr_attrs(self, die):
         for aname in die.attributes:
