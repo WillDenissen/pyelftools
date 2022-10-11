@@ -1,3 +1,3 @@
 void f(void) {}
-void g(void *p) {}
-void* h(){}
+void g(int p) {}
+void h(){}
