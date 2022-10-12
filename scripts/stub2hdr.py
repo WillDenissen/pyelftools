@@ -492,7 +492,7 @@ class DumpHeader:
                 self.pr_tag(die)
                 self.pr_attrs(die)
             tag2pr_func[die.tag](self, die)
-        else:
+        elif self.args.verbose:
             self.pr_tag(die)
             self.pr_attrs(die)
             self.pr_children(die)
@@ -502,10 +502,7 @@ class DumpHeader:
             die.offset, die.tag, die.size, die.has_children))
 
     def pr_attr(self, die, aname):
-        if  self.args.verbose:
-            self.pr_ln('//   %-18s:  %s' % (aname, st_attr(die, aname)))
-        else:
-            self.pr_ln('// %s' % (die.attributes[aname],))
+        self.pr_ln('//   %-18s:  %s' % (aname, st_attr(die, aname)))
 
     def pr_attrs(self, die):
         for aname in die.attributes:
