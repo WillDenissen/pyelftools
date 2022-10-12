@@ -1,5 +1,5 @@
 CC           = gcc
-CFLAGS       = -fPIC 
+CFLAGS       = -fPIC -Wall -pedantic
 LFLAGS       = -shared -nodefaultlibs -nostdlib -Wl,-z,defs -Wl,--no-allow-shlib-undefined
 gcc_DFLAGS   = -g -gpubnames -grecord-gcc-switches -gstrict-dwarf -g3 -gdwarf-5 -feliminate-unused-debug-symbols -feliminate-unused-debug-types -fdebug-types-section
 clang_DFLAGS = -g -gpubnames -gstrict-dwarf -g3 -gdwarf-5 -feliminate-unused-debug-types -fdebug-types-section

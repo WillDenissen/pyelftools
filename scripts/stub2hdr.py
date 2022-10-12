@@ -57,7 +57,6 @@ def st_array(tdie):
             txt += st_dim(dim)
     return txt
 
-
 def st_attr_dflt(val):
     return '%s' % val
 
@@ -153,25 +152,21 @@ def st_union(tdie):
     return 'union %s' % st_name(tdie)
 
 def st_const(tdie):
-    return 'const ' + st_type(DIE_typeof(tdie))
+    return st_type(DIE_typeof(tdie)) + ' const '
 
 def st_pointer(tdie):
-    return '*' + st_type(DIE_typeof(tdie))
+    return st_type(DIE_typeof(tdie)) + '*'
 
 def st_reference(tdie):
-    return '&' + st_type(DIE_typeof(tdie))
+    return st_type(DIE_typeof(tdie)) + '&'
+
+def st_unspec_param(tdie):
+    return '...'
 
 def st_subroutine(tdie):
     prms_st = ', '.join(st_type(pdie) for pdie in tdie.iter_children() 
     if pdie.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and not DIE_has_attr(pdie, 'DW_AT_artificial'))
     return '%s(%s)(%s)' % (st_type(DIE_typeof(tdie)), st_opt_name(tdie), prms_st)
-
-def DIE_is_ptr_to_member_struct(tdie):
-    if tdie.tag == 'DW_TAG_structure_type':
-        members = tuple(die for die in tdie.iter_children() if die.tag == 'DW_TAG_member')
-        return len(members) == 2 and st_opt_name(members[0]) == '__pfn' and st_opt_name(members[1]) == '__delta'
-    return False
-
 
 # dispatch table for st_type 
 # contains st_<x>(die) -> string functions
@@ -195,7 +190,7 @@ tag2st_func = dict(
   DW_TAG_subroutine_type          = st_subroutine,
   DW_TAG_typedef                  = st_typedef,
   DW_TAG_union_type               = st_union,
-  #DW_TAG_unspecified_parameters   =
+  DW_TAG_unspecified_parameters   = st_unspec_param,
   #DW_TAG_variant                  =
   #DW_TAG_common_block             =
   #DW_TAG_common_inclusion         =
@@ -243,6 +238,7 @@ tag2st_func = dict(
   #DW_TAG_rvalue_reference_type    =
 )
 
+# TODO strip modifiers and dimensions
 def st_type(tdie):
     if tdie == None:
         return 'void'
@@ -251,18 +247,20 @@ def st_type(tdie):
     return '/* tag: %s */' % tdie.tag
 
 def pr_variable(self, die):
+    if not DIE_has_attr(die, 'DW_AT_external'): return
     tdie = DIE_typeof(die)
     self.pr_ln('%s %s;' % (st_type(tdie), st_name(die)))
+
+def pr_param(self, die):
+    tdie = DIE_typeof(die)
+    self.pr_ln('%s %s' % (st_type(tdie), st_name(die)))
+
+def pr_varargs(self, die):
+    self.pr_ln('...')
 
 def pr_typedef(self, die):
     tdie = DIE_typeof(die)
     self.pr_ln('typedef %s %s;' % (st_type(tdie), st_name(die)))
-
-tag2usr_cls = dict(
-    DW_TAG_structure_type = 'struct',
-    DW_TAG_union_type     = 'union',
-    DW_TAG_class_type     = 'class',
-)
 
 def pr_enumerator(self, die):
     name = st_name(die)
@@ -282,6 +280,12 @@ def pr_enumeration_type(self, die):
     self.ind_lvl -= 1
     self.pr_ln('};')
 
+tag2usr_cls = dict(
+    DW_TAG_structure_type = 'struct',
+    DW_TAG_union_type     = 'union',
+    DW_TAG_class_type     = 'class',
+)
+
 def pr_user_type(self, die):
     # skip anonymous user types at outer nesting
     # they will be printed in a named context
@@ -298,6 +302,7 @@ def pr_user_type(self, die):
     self.pr_ln('};')
 
 def pr_subprogram(self, die):
+    if not DIE_has_attr(die, 'DW_AT_external'): return
     tdie = DIE_typeof(die)
     self.pr_ln('%s %s (' % (st_type(tdie), st_name(die)))
     self.ind_lvl += 1
@@ -327,7 +332,7 @@ tag2pr_func = dict(
   DW_TAG_class_type               = pr_user_type,
   DW_TAG_entry_point              = pr_exit,
   DW_TAG_enumeration_type         = pr_enumeration_type,
-  #DW_TAG_formal_parameter         =
+  DW_TAG_formal_parameter         = pr_param,
   DW_TAG_imported_declaration     = pr_exit,
   DW_TAG_label                    = pr_exit,
   DW_TAG_lexical_block            = pr_exit,
@@ -340,7 +345,7 @@ tag2pr_func = dict(
   #DW_TAG_subroutine_type          = 
   DW_TAG_typedef                  = pr_typedef,
   DW_TAG_union_type               = pr_user_type,
-  #DW_TAG_unspecified_parameters   = 
+  DW_TAG_unspecified_parameters   = pr_varargs,
   #DW_TAG_variant                  = 
   DW_TAG_common_block             = pr_exit,
   #DW_TAG_common_inclusion         = 
@@ -472,6 +477,8 @@ class DumpHeader:
 
     def pr_attrs(self, die):
         for aname in die.attributes:
+            if aname in ('DW_AT_decl_file', 'DW_AT_decl_line', 'DW_AT_decl_column', 'DW_AT_low_pc', 'DW_AT_high_pc'):
+                continue
             self.pr_attr(die, aname)
 
     def pr_children(self, die):        
