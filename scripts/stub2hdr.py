@@ -10,6 +10,7 @@
 # Will Denissen
 # This code is in the public domain
 #-------------------------------------------------------------------------------
+from collections import defaultdict
 import argparse
 import sys, os
 
@@ -57,63 +58,97 @@ def st_array(die):
 
     return '%s %s%s' % (st_type(tdie), st_name(die), dim_st)
 
-def st_attr_dflt(val):
+def st_form_dflt(val):
     return '%s' % val
 
-def st_attr_string(val):
-  return bytes2str(val)
+def st_form_flag(val):
+    return '%s' % bool(val)
 
-def st_attr_ref(val):
-      return '<0x%x>' % val
+def st_form_string(val):
+    return bytes2str(val)
 
-def st_attr_hex(val):
-  return '0x%x' % (val)
+def st_form_ref(val):
+    return '<0x%x>' % val
 
+def st_form_ref_sig8(val):
+    return '<signature 0x%x>' % val
 
-def st_attr_hex_addr(val):
-  return '<0x%x>' % val
+def st_form_hex(val):
+    return '0x%x' % (val)
 
+def st_form_hex_addr(val):
+    return '<0x%x>' % val
 
-def st_attr_split_64bit(val):
-  lo_w =  val        & 0xFFFFFFFF
-  hi_w = (val >> 32) & 0xFFFFFFFF
+def st_form_split_64bit(val):
+    lo_w =  val        & 0xFFFFFFFF
+    hi_w = (val >> 32) & 0xFFFFFFFF
 
-  return '0x%x 0x%x' % (lo_w, hi_w)
+    return '0x%x 0x%x' % (lo_w, hi_w)
 
-
-def st_attr_block(val):
+def st_form_block(val):
   s = '%s byte block: ' % len(val)
   s += ' '.join('%02x' % item for item in val)
   return s
 
-# dispatch table for st_attr_<x>(val) functions
-form2st_attr = dict(
-  DW_FORM_ref1       = st_attr_ref,
-  DW_FORM_ref2       = st_attr_ref,
-  DW_FORM_ref4       = st_attr_ref,
-  DW_FORM_ref8       = st_attr_ref,
-  DW_FORM_ref_udata  = st_attr_ref,        
-  DW_FORM_ref_addr   = st_attr_ref,
-  DW_FORM_data4      = st_attr_dflt,
-  DW_FORM_data8      = st_attr_dflt,
-  DW_FORM_addr       = st_attr_hex,
-  DW_FORM_sec_offset = st_attr_hex,
-  DW_FORM_flag       = st_attr_dflt,
-  DW_FORM_data1      = st_attr_dflt,
-  DW_FORM_data2      = st_attr_dflt,
-  DW_FORM_sdata      = st_attr_dflt,
-  DW_FORM_udata      = st_attr_dflt,
-  DW_FORM_string     = st_attr_string,
-  DW_FORM_strp       = st_attr_string,
-  DW_FORM_block1     = st_attr_block,
-  DW_FORM_block2     = st_attr_block,
-  DW_FORM_block4     = st_attr_block,
-  DW_FORM_block      = st_attr_block,
+# dispatch table for st_form_<x>(val) functions
+form2st_form = defaultdict(
+    lambda: st_form_dflt, # default_factory
+    # DW_FORM_null                =
+    DW_FORM_addr                = st_form_hex,
+    DW_FORM_ref                 = st_form_ref,
+    DW_FORM_block2              = st_form_block,
+    DW_FORM_block4              = st_form_block,
+    # DW_FORM_data2               = 
+    # DW_FORM_data4               = 
+    # DW_FORM_data8               = 
+    DW_FORM_string              = st_form_string,
+    DW_FORM_block               = st_form_block,
+    DW_FORM_block1              = st_form_block,
+    # DW_FORM_data1               = 
+    # DW_FORM_flag                = 
+    # DW_FORM_sdata               = 
+    DW_FORM_strp                = st_form_string,
+    # DW_FORM_udata               = 
+    DW_FORM_ref_addr            = st_form_ref,
+    DW_FORM_ref1                = st_form_ref,
+    DW_FORM_ref2                = st_form_ref,
+    DW_FORM_ref4                = st_form_ref,
+    DW_FORM_ref8                = st_form_ref,
+    DW_FORM_ref_udata           = st_form_ref,        
+    # DW_FORM_indirect            =
+    # DW_FORM_sec_offset          =
+    DW_FORM_sec_offset          = st_form_hex,
+    # DW_FORM_exprloc             =
+    # DW_FORM_flag_present        =
+    # DW_FORM_strx                =
+    # DW_FORM_addrx               =
+    # DW_FORM_ref_sup4            =
+    # DW_FORM_strp_sup            =
+    # DW_FORM_data16              =
+    # DW_FORM_line_strp           =
+    DW_FORM_ref_sig8            = st_form_ref_sig8,
+    # DW_FORM_implicit_const      =
+    # DW_FORM_loclistx            =
+    # DW_FORM_rnglistx            =
+    # DW_FORM_ref_sup8            =
+    # DW_FORM_strx1               =
+    # DW_FORM_strx2               =
+    # DW_FORM_strx3               =
+    # DW_FORM_strx4               =
+    # DW_FORM_addrx1              =
+    # DW_FORM_addrx2              =
+    # DW_FORM_addrx3              =
+    # DW_FORM_addrx4              =
+
+    # DW_FORM_GNU_addr_index      =
+    # DW_FORM_GNU_str_index       =
+    # DW_FORM_GNU_ref_alt         =
+    # DW_FORM_GNU_strp_alt        =
 )
 
 def st_attr(die, aname):
     attr = die.attributes[aname]
-    return form2st_attr.get(attr.form, st_attr_dflt)(attr.value) 
+    return form2st_form[attr.form](attr.value) 
 
 def DIE_typeof(die):
     return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
