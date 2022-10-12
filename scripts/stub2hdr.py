@@ -32,29 +32,20 @@ def pr_exit(self, die):
 def pr_skip(self, die):
     pass
 
-def st_subrange(self, die):
-    if 'DW_AT_upper_bound' in die.attributes:
-        res = '[%s]' % (die.attributes['DW_AT_upper_bound'] + 1, )
-    elif 'DW_AT_count' in die.attributes:
-        res = '[%s]' % (die.attributes['DW_AT_upper_bound'], )
-    else:
-        res = '[]'
-
-    return res
-
-def st_dim(tdie):
-    if DIE_has_attr(tdie, 'DW_AT_upper_bound'):
-        return '[%s]' % (tdie.attributes['DW_AT_upper_bound'].value + 1,)
-    if DIE_has_attr(tdie, 'DW_AT_count'):
-        return '[%s]' % tdie.attributes['DW_AT_count'].value
+def st_subrange(die):
+    if DIE_has_attr(die, 'DW_AT_upper_bound'):
+        return '[%s]' % (DIE_attr(die, 'DW_AT_upper_bound').value + 1, )
+    elif DIE_has_attr(die, 'DW_AT_count'):
+        return '[%s]' % (DIE_attr(die, 'DW_AT_count').value, )
     else:
         return '[]'
 
 def st_array(tdie):
-    txt = st_type(DIE_typeof(tdie))
-    for dim in tdie.iter_children():
-        if dim.tag == 'DW_TAG_subrange_type':
-            txt += st_dim(dim)
+    txt = ''
+    if tdie != None:
+        for dim in tdie.iter_children():
+            if dim.tag == 'DW_TAG_subrange_type':
+                txt += st_subrange(dim)
     return txt
 
 def st_attr_dflt(val):
@@ -173,7 +164,7 @@ def st_subroutine(tdie):
 # tags that cannot exist in a ELF stub will be mapped on st_exit
 tag2st_func = dict(
   #DW_TAG_null                     =
-  DW_TAG_array_type               = st_array,
+  #DW_TAG_array_type               = 
   #DW_TAG_class_type               = st_class,
   #DW_TAG_entry_point              =
   DW_TAG_enumeration_type         = st_enum,
@@ -246,21 +237,29 @@ def st_type(tdie):
         return tag2st_func[tdie.tag](tdie)
     return '/* tag: %s */' % tdie.tag
 
+def peel_off_array(tdie):
+    if tdie.tag == 'DW_TAG_array_type':
+        return DIE_typeof(tdie), tdie
+    return tdie, None 
+
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
     tdie = DIE_typeof(die)
-    self.pr_ln('%s %s;' % (st_type(tdie), st_name(die)))
+    tdie, adie = peel_off_array(tdie) 
+    self.pr_ln('%s %s%s;' % (st_type(tdie), st_name(die), st_array(adie)))
 
 def pr_param(self, die):
     tdie = DIE_typeof(die)
-    self.pr_ln('%s %s' % (st_type(tdie), st_name(die)))
+    tdie, adie = peel_off_array(tdie) 
+    self.pr_ln('%s %s%s' % (st_type(tdie), st_name(die), st_array(adie)))
 
 def pr_varargs(self, die):
     self.pr_ln('...')
 
 def pr_typedef(self, die):
     tdie = DIE_typeof(die)
-    self.pr_ln('typedef %s %s;' % (st_type(tdie), st_name(die)))
+    tdie, adie = peel_off_array(tdie) 
+    self.pr_ln('typedef %s %s%s;' % (st_type(tdie), st_name(die), st_array(adie)))
 
 def pr_enumerator(self, die):
     name = st_name(die)
