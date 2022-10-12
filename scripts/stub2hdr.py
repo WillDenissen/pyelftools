@@ -40,13 +40,22 @@ def st_subrange(die):
     else:
         return '[]'
 
-def st_array(tdie):
-    txt = ''
-    if tdie != None:
-        for dim in tdie.iter_children():
+def peel_off_array(tdie):
+    if tdie.tag == 'DW_TAG_array_type':
+        return DIE_typeof(tdie), tdie
+    return tdie, None 
+
+def st_array(die):
+    tdie = DIE_typeof(die)
+    tdie, adie = peel_off_array(tdie) 
+
+    dim_st = ''
+    if adie != None:
+        for dim in adie.iter_children():
             if dim.tag == 'DW_TAG_subrange_type':
-                txt += st_subrange(dim)
-    return txt
+                dim_st += st_subrange(dim)
+
+    return '%s %s%s' % (st_type(tdie), st_name(die), dim_st)
 
 def st_attr_dflt(val):
     return '%s' % val
@@ -237,29 +246,18 @@ def st_type(tdie):
         return tag2st_func[tdie.tag](tdie)
     return '/* tag: %s */' % tdie.tag
 
-def peel_off_array(tdie):
-    if tdie.tag == 'DW_TAG_array_type':
-        return DIE_typeof(tdie), tdie
-    return tdie, None 
-
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
-    tdie = DIE_typeof(die)
-    tdie, adie = peel_off_array(tdie) 
-    self.pr_ln('%s %s%s;' % (st_type(tdie), st_name(die), st_array(adie)))
+    self.pr_ln('%s;' % st_array(die))
 
 def pr_param(self, die):
-    tdie = DIE_typeof(die)
-    tdie, adie = peel_off_array(tdie) 
-    self.pr_ln('%s %s%s' % (st_type(tdie), st_name(die), st_array(adie)))
+    self.pr_ln(st_array(die))
 
 def pr_varargs(self, die):
     self.pr_ln('...')
 
 def pr_typedef(self, die):
-    tdie = DIE_typeof(die)
-    tdie, adie = peel_off_array(tdie) 
-    self.pr_ln('typedef %s %s%s;' % (st_type(tdie), st_name(die), st_array(adie)))
+    self.pr_ln('typedef %s;' % st_array(die))
 
 def pr_enumerator(self, die):
     name = st_name(die)

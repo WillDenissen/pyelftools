@@ -1,3 +1,4 @@
-typedef int my_int;
+typedef int int_t;
+typedef int *ext_t[5];
 
-my_int p;
+ext_t *p[2];
