@@ -1,4 +1,6 @@
-GFLAGS = -V
+#GFLAGS = -V f # tag and all attributes
+GFLAGS = -V t # tag and type attributes
+#GFLAGS =      # no tags or attributes
 
 demo: clean check
 

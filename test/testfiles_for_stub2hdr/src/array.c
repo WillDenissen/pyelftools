@@ -1,9 +1,13 @@
 // common
 int v1[2];
-int *v2[10][20];
+int *v2[1][2];
+int * const (** const (***(v3[1])[2])[3]);
+int ***v4[1][2][3];
 
-int f(int *var[30]) {}
-int g(int **var) {}
-
-// WIP 
-// int *(*v3[10][20])[30];
+int g(
+  int **var
+) {}
+int f(
+  int *var[3]  // var[3] is interpreted as *var
+) {}
+ 

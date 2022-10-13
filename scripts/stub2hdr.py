@@ -41,22 +41,54 @@ def st_subrange(die):
     else:
         return '[]'
 
-def peel_off_array(tdie):
-    if tdie.tag == 'DW_TAG_array_type':
-        return DIE_typeof(tdie), tdie
-    return tdie, None 
+PEEL_TAGS = ('DW_TAG_array_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type', 'DW_TAG_const_type')
 
-def st_array(die):
-    tdie = DIE_typeof(die)
-    tdie, adie = peel_off_array(tdie) 
+def peel_off_types(tdie):
+    '''walks over parent to child types list and peels off all types in PEEL_TAGS
+    
+        returns 
+          tdie_l : a parent child type list with tags within PEEL_TAGS
+          tdie   : fist child type with tag not in PEEL_TAGS 
+    '''
+    tdie_l = []
+    while tdie and tdie.tag in PEEL_TAGS:
+        tdie_l.append(tdie)
+        tdie = DIE_typeof(tdie)
+    return tdie_l, tdie
 
-    dim_st = ''
-    if adie != None:
-        for dim in adie.iter_children():
-            if dim.tag == 'DW_TAG_subrange_type':
-                dim_st += st_subrange(dim)
+def st_dims(tdie):
+    txt = ''
+    for dim in tdie.iter_children():
+        if dim.tag == 'DW_TAG_subrange_type':
+            txt += st_subrange(dim)
 
-    return '%s %s%s' % (st_type(tdie), st_name(die), dim_st)
+    return txt
+
+def st_type_expr(tdie_l, name):
+    txt = name
+    for tdie in tdie_l:
+        if   tdie.tag in 'DW_TAG_array_type':
+            txt = '(%s%s)' % (txt, st_dims(tdie))
+        elif tdie.tag in 'DW_TAG_pointer_type':
+            txt = '*' + txt
+        elif tdie.tag in 'DW_TAG_reference_type':
+            txt = '&' + txt
+        elif tdie.tag in 'DW_TAG_const_type':
+            txt = ' const ' + txt
+
+    if txt[0] == '(':
+        txt = txt[1:-1]
+    return txt
+
+def st_var(die):
+    name           = st_name(die)
+    tdie           = DIE_typeof(die)
+    tdie_l, chtdie = peel_off_types(tdie)
+    cnst_st        = ''
+    if len(tdie_l) and tdie_l[-1].tag == 'DW_TAG_const_type':
+        tdie_l.pop()
+        cnst_st = 'const '
+    return  '%s%s %s' % (cnst_st, st_type(chtdie), st_type_expr(tdie_l, name)) 
 
 def st_form_dflt(val):
     return '%s' % val
@@ -186,15 +218,6 @@ def st_struct(tdie):
 def st_union(tdie):
     return 'union %s' % st_name(tdie)
 
-def st_const(tdie):
-    return st_type(DIE_typeof(tdie)) + ' const '
-
-def st_pointer(tdie):
-    return st_type(DIE_typeof(tdie)) + '*'
-
-def st_reference(tdie):
-    return st_type(DIE_typeof(tdie)) + '&'
-
 def st_unspec_param(tdie):
     return '...'
 
@@ -208,7 +231,7 @@ def st_subroutine(tdie):
 # tags that cannot exist in a ELF stub will be mapped on st_exit
 tag2st_func = dict(
   #DW_TAG_null                     =
-  #DW_TAG_array_type               = 
+  #DW_TAG_array_type               = see st_type_expr
   #DW_TAG_class_type               = st_class,
   #DW_TAG_entry_point              =
   DW_TAG_enumeration_type         = st_enum,
@@ -217,8 +240,8 @@ tag2st_func = dict(
   #DW_TAG_label                    =
   #DW_TAG_lexical_block            =
   #DW_TAG_member                   =
-  DW_TAG_pointer_type             = st_pointer,
-  DW_TAG_reference_type           = st_reference,
+  #DW_TAG_pointer_type             = see st_type_expr
+  #DW_TAG_reference_type           = see st_type_expr
   #DW_TAG_compile_unit             =
   #DW_TAG_string_type              =
   DW_TAG_structure_type           = st_struct,
@@ -239,7 +262,7 @@ tag2st_func = dict(
   #DW_TAG_access_declaration       =
   DW_TAG_base_type                = st_base,
   #DW_TAG_catch_block              =
-  DW_TAG_const_type               = st_const,
+  #DW_TAG_const_type               = see st_type_expr
   #DW_TAG_constant                 =
   #DW_TAG_enumerator               =
   #DW_TAG_file_type                =
@@ -279,20 +302,20 @@ def st_type(tdie):
         return 'void'
     if tdie.tag in tag2st_func:
         return tag2st_func[tdie.tag](tdie)
-    return '/* tag: %s */' % tdie.tag
+    return '/* Die 0x%x: */' % tdie.offset
 
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
-    self.pr_ln('%s;' % st_array(die))
+    self.pr_ln('%s;' % st_var(die))
 
 def pr_param(self, die):
-    self.pr_ln(st_array(die))
+    self.pr_ln(st_var(die))
+
+def pr_typedef(self, die):
+    self.pr_ln('typedef %s;' % st_var(die))
 
 def pr_varargs(self, die):
     self.pr_ln('...')
-
-def pr_typedef(self, die):
-    self.pr_ln('typedef %s;' % st_array(die))
 
 def pr_enumerator(self, die):
     name = st_name(die)
@@ -488,27 +511,32 @@ class DumpHeader:
                 die to print definition of.
         '''
         if die.tag in tag2pr_func:
-            if self.args.verbose:
-                self.pr_tag(die)
-                self.pr_attrs(die)
+            self.pr_tag(die)
+            self.pr_attrs(die)
             tag2pr_func[die.tag](self, die)
-        elif self.args.verbose:
+        else:
             self.pr_tag(die)
             self.pr_attrs(die)
             self.pr_children(die)
 
     def pr_tag(self, die):
-        self.pr_ln('// 0x%x: DIE %s, size=%s, has_children=%s' % (
+        if 'f' in self.args.verbosity:
+            self.pr_ln('// 0x%x: %s, size=%s, has_children=%s' % (
             die.offset, die.tag, die.size, die.has_children))
+        elif 't' in self.args.verbosity:
+            self.pr_ln('// 0x%x: %s' % (die.offset, die.tag[7:]))        # trim 'DW_TAG_'
 
     def pr_attr(self, die, aname):
-        self.pr_ln('//   %-18s:  %s' % (aname, st_attr(die, aname)))
-
+        if 'f' in self.args.verbosity:
+            self.pr_ln('//   %-18s:   %s' % (aname, st_attr(die, aname)))
+        elif 't' in self.args.verbosity:
+            self.pr_ln('//   %-18s:   %s' % (aname[6:], st_attr(die, aname))) # trim 'DW_AT_'
+    
     def pr_attrs(self, die):
-        for aname in die.attributes:
-            if aname in ('DW_AT_decl_file', 'DW_AT_decl_line', 'DW_AT_decl_column', 'DW_AT_low_pc', 'DW_AT_high_pc'):
-                continue
-            self.pr_attr(die, aname)
+        if self.args.verbosity:
+            for aname in die.attributes:
+                if aname not in self.args.skip_aname:
+                    self.pr_attr(die, aname)
 
     def pr_children(self, die):        
         self.ind_lvl += 1
@@ -527,23 +555,40 @@ class DumpHeader:
 SCRIPT_DESCRIPTION = 'Extract header file from an ELF/DWARF formatted stub file'
 VERSION_STRING = '%%(prog)s: based on pyelftools %s' % __version__
 
+SKIP_ANAME = (
+    'DW_AT_decl_file',
+    'DW_AT_decl_line',
+    'DW_AT_decl_column',
+    'DW_AT_byte_size',
+    'DW_AT_encoding',
+    'DW_AT_sibling',
+    'DW_AT_location',
+    'DW_AT_frame_base',
+    'DW_AT_call_all_calls',
+    'DW_AT_stmt_list',
+    'DW_AT_macros',
+    'DW_AT_low_pc',
+    'DW_AT_high_pc'
+    )
+
 def main(stream=None):
     argparser = argparse.ArgumentParser(
             # usage='%(prog)s [options] <elf+dwarf-stubfile>',
-            description=SCRIPT_DESCRIPTION,
-            prog=PROG)
+            description = SCRIPT_DESCRIPTION,
+            prog        = PROG)
     argparser.add_argument('-v', '--version',
-            action='version', version=VERSION_STRING)
-    argparser.add_argument('-V', '--verbose',
-            action='store_true',
-            dest='verbose',
-            help='verbose output')
+            action      = 'version', 
+            version     = VERSION_STRING)
+    argparser.add_argument('-V', '--verbosity',
+            default     = '',
+            dest        = 'verbosity',
+            help        = 'verbosity of output: one of t)ype f)ull')
     argparser.add_argument('-o', 
-            dest = 'odir',
-            help='output directory')
+            dest        = 'odir',
+            help        = 'output directory')
     argparser.add_argument( 
-            dest = 'idir',
-            help='input directory')
+            dest  = 'idir',
+            help = 'input directory')
     args = argparser.parse_args()
 
     if not args.idir:
@@ -552,6 +597,11 @@ def main(stream=None):
 
     if not args.odir:
         args.odir = args.idir[:-3]+'out'
+
+    if 'f' in args.verbosity:
+        args.skip_aname = tuple()
+    elif 't' in args.verbosity:
+        args.skip_aname = SKIP_ANAME
 
     print('... Reading from: %s ...' % args.idir)
     print('... Writing   to: %s ...' % args.odir)
