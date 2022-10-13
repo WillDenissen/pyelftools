@@ -1,10 +1,12 @@
 CC           = gcc
+#CC           = clang
 CFLAGS       = -fPIC -Wall -pedantic -Wno-return-type -Wno-unused-function
 LFLAGS       = -shared -nodefaultlibs -nostdlib -Wl,-z,defs -Wl,--no-allow-shlib-undefined
-gcc_DFLAGS   = -g -gpubnames -grecord-gcc-switches -gstrict-dwarf -g3 -gdwarf-5 -feliminate-unused-debug-symbols -feliminate-unused-debug-types -fdebug-types-section
-clang_DFLAGS = -g -gpubnames -gstrict-dwarf -g3 -gdwarf-5 -feliminate-unused-debug-types -fdebug-types-section
+GFLAGS       = -g -gpubnames -grecord-gcc-switches -gstrict-dwarf -g3 -gdwarf-5
+gcc_FFLAGS   = -feliminate-unused-debug-symbols -feliminate-unused-debug-types -fdebug-types-section
+clang_FFLAGS = -feliminate-unused-debug-types -fdebug-types-section
 
-DFLAGS       = $(CFLAGS) $(GCC_DFLAGS) ${${CC}_DFLAGS} 
+DFLAGS       = $(CFLAGS) $(GFLAGS) ${${CC}_FFLAGS} 
 
 ODFLAGS      = -hpx -w -g
 REFLAGS      = -a -W --debug-dump
