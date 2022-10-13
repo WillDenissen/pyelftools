@@ -1,15 +1,15 @@
 
 Test framework for the `stub2hdr.py` tool (of only 636 lines!)
 
-It demonstates that for each test file ```<x>.c``` found in `src/*`:
-- a stub can be build ```lib<x>.so```
-- a header can be extracted from the stub ```<x>.h```
-- a precompiled header ```<x>.h.gch``` can be generated from the header
- - that is `100x` times bigger than the stublib
+It demonstates that for each ***test file*** ```<x>.c``` found in `src/*`:
+- a ***stublib*** ```lib<x>.so``` can be build from the ***test file***
+- a ***header*** ```<x>.h``` can be extracted from the ***stublib*** 
+- a ***precompiled header*** ```<x>.h.gch``` can be generated from the ***header***
+ - which is `100x` times bigger than the ***stublib***
 
 So the dataflow is:
 ```
-src/<x>.c --> src/bld/lib<x>.so --> out/<x>.h --> (gcc) --> out/<x>h.gch```
+src/<x>.c --> (gcc) --> src/bld/lib<x>.so --> (stub2header.py) --> out/<x>.h --> (gcc) --> out/<x>h.gch```
 ```
 The file system structure is:
 ```
