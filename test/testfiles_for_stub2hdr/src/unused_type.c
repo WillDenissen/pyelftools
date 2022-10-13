@@ -2,4 +2,8 @@ struct unused_t {
     double d;
 };
 
-int p;
+struct used_t {
+    double d;
+};
+
+struct used_t p;
