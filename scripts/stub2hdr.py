@@ -64,20 +64,24 @@ def st_dims(tdie):
 
     return txt
 
+# TODO proper sub_expression nesting
+def sub_expr(txt):
+    if txt[-1] == ']':
+        return '(%s)' % txt
+    else:
+        return txt
+
 def st_type_expr(tdie_l, name):
     txt = name
     for tdie in tdie_l:
         if   tdie.tag in 'DW_TAG_array_type':
-            txt = '(%s%s)' % (txt, st_dims(tdie))
+            txt = sub_expr(txt) + st_dims(tdie)
         elif tdie.tag in 'DW_TAG_pointer_type':
-            txt = '*' + txt
+            txt = '*%s' % txt
         elif tdie.tag in 'DW_TAG_reference_type':
-            txt = '&' + txt
+            txt = '&%s' % txt
         elif tdie.tag in 'DW_TAG_const_type':
-            txt = ' const ' + txt
-
-    if txt[0] == '(':
-        txt = txt[1:-1]
+            txt = 'const %s' % txt
     return txt
 
 def st_var(die):
@@ -308,6 +312,9 @@ def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
     self.pr_ln('%s;' % st_var(die))
 
+def pr_member(self, die):
+    self.pr_ln('%s;' % st_var(die))
+
 def pr_param(self, die):
     self.pr_ln(st_var(die))
 
@@ -391,7 +398,7 @@ tag2pr_func = dict(
   DW_TAG_imported_declaration     = pr_exit,
   DW_TAG_label                    = pr_exit,
   DW_TAG_lexical_block            = pr_exit,
-  DW_TAG_member                   = pr_variable,
+  DW_TAG_member                   = pr_member,
   #DW_TAG_pointer_type             =
   #DW_TAG_reference_type           =
   DW_TAG_compile_unit             = pr_compile_unit, 

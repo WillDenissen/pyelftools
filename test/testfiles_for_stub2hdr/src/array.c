@@ -1,8 +1,9 @@
 // common
 int v1[2];
 int *v2[1][2];
-int * const (** const (***(v3[1])[2])[3]);
-int ***v4[1][2][3];
+int (*v3[1])[2];
+int * const (** const (***v4[1])[2])[3];
+int ***v5[1][2][3];
 
 int g(
   int **var
