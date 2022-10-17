@@ -1,5 +1,5 @@
 struct s1_t {
-    double x;
+    char   x;
     double y;
 };
 struct s1_t s1;
@@ -18,12 +18,22 @@ struct s3_t {
 };
 struct s3_t s3;
 
+struct s5_t {
+    struct st51_t {
+        double x;
+        double y;
+    };
+    double z;
+};
+struct s5_t s5;
+
 // WIP
-// struct s5_t {
+// struct s6_t {
 //     struct {
 //         double x;
 //         double y;
-//     };
+//     } a;
 //     double z;
 // };
-// struct s5_t s5;
+// struct s6_t s6;
+

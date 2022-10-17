@@ -85,7 +85,7 @@ def st_type_expr(tdie_l, name):
     return txt
 
 def st_var(die):
-    name           = st_name(die)
+    name           = st_opt_name(die)
     tdie           = DIE_typeof(die)
     tdie_l, chtdie = peel_off_types(tdie)
     cnst_st        = ''
@@ -217,7 +217,7 @@ def st_enum(tdie):
     return 'enum %s' % st_name(tdie)
 
 def st_struct(tdie):
-    return 'struct %s' % st_name(tdie)
+    return 'struct %s' % st_opt_name(tdie)
 
 def st_union(tdie):
     return 'union %s' % st_name(tdie)
