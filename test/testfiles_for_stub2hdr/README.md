@@ -62,7 +62,8 @@ GNU C provides several language features not found in ISO standard C.
 
 #### Attributes
 GNU C provides attributes on types/variable/functions as an extension.
-These attributes are not preserved in DWARF.
-Therefore, GNU C attributes are not allowed to be used in stublibs. 
+These attributes are not preserved in DWARF, and would make the compile/link interface compiler dependend.
+Therefore, GNU C attributes are not allowed to be used in stublibs.
+Once attributes are standardized in DWARF, they canbeconme part of the generated headers.
 
 https://gcc.gnu.org/onlinedocs/gcc/Attribute-Syntax.html#Attribute-Syntax
