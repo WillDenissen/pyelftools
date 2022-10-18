@@ -1,4 +1,4 @@
-# Denonstrator stub2hdr.py
+# Demonstrator stub2hdr.py
 Test framework for the `stub2hdr.py` tool (of only 636 lines!)
 
 It demonstates that for each ***test file*** ```<x>.c``` found in `src/*`:

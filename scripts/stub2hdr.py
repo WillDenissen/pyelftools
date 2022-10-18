@@ -41,7 +41,13 @@ def st_subrange(die):
     else:
         return '[]'
 
-PEEL_TAGS = ('DW_TAG_array_type', 'DW_TAG_pointer_type', 'DW_TAG_reference_type', 'DW_TAG_const_type')
+PEEL_TAGS = (
+    'DW_TAG_array_type', 
+    'DW_TAG_pointer_type', 
+    'DW_TAG_reference_type', 
+    'DW_TAG_const_type', 
+    'DW_TAG_restrict_type'
+    )
 
 def peel_off_types(tdie):
     '''walks over parent to child types list and peels off all types in PEEL_TAGS
@@ -82,6 +88,8 @@ def st_type_expr(tdie_l, name):
             txt = '&%s' % txt
         elif tdie.tag in 'DW_TAG_const_type':
             txt = 'const %s' % txt
+        elif tdie.tag in 'DW_TAG_restrict_type':
+            txt = '__restrict %s' % txt
     return txt
 
 def st_var(die):
@@ -94,39 +102,39 @@ def st_var(die):
         cnst_st = 'const '
     return  '%s%s %s' % (cnst_st, st_type(chtdie), st_type_expr(tdie_l, name)) 
 
-def st_form_dflt(val):
+def st_form_dflt(die, val):
     return '%s' % val
 
-def st_form_flag(val):
+def st_form_flag(die, val):
     return '%s' % bool(val)
 
-def st_form_string(val):
+def st_form_string(die, val):
     return bytes2str(val)
 
-def st_form_ref(val):
-    return '<0x%x>' % val
+def st_form_ref(die, val):
+    return '<0x%x>' % (val + die.cu.cu_offset)
 
-def st_form_ref_sig8(val):
+def st_form_ref_sig8(die, val):
     return '<signature 0x%x>' % val
 
-def st_form_hex(val):
+def st_form_hex(die, val):
     return '0x%x' % (val)
 
-def st_form_hex_addr(val):
+def st_form_hex_addr(die, val):
     return '<0x%x>' % val
 
-def st_form_split_64bit(val):
+def st_form_split_64bit(die, val):
     lo_w =  val        & 0xFFFFFFFF
     hi_w = (val >> 32) & 0xFFFFFFFF
 
     return '0x%x 0x%x' % (lo_w, hi_w)
 
-def st_form_block(val):
+def st_form_block(die, val):
   s = '%s byte block: ' % len(val)
   s += ' '.join('%02x' % item for item in val)
   return s
 
-# dispatch table for st_form_<x>(val) functions
+# dispatch table for st_form_<x>(die, val) functions
 form2st_form = defaultdict(
     lambda: st_form_dflt, # default_factory
     # DW_FORM_null                =
@@ -184,7 +192,7 @@ form2st_form = defaultdict(
 
 def st_attr(die, aname):
     attr = die.attributes[aname]
-    return form2st_form[attr.form](attr.value) 
+    return form2st_form[attr.form](die, attr.value) 
 
 def DIE_typeof(die):
     return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
@@ -286,7 +294,7 @@ tag2st_func = dict(
   #DW_TAG_variable                 =
   #DW_TAG_volatile_type            =
   #DW_TAG_dwarf_procedure          =
-  #DW_TAG_restrict_type            =
+  #DW_TAG_restrict_type            = see st_type_expr
   #DW_TAG_interface_type           =
   #DW_TAG_namespace                =
   #DW_TAG_imported_module          =
@@ -306,11 +314,11 @@ def st_type(tdie):
         return 'void'
     if tdie.tag in tag2st_func:
         return tag2st_func[tdie.tag](tdie)
-    return '/* Die 0x%x: */' % tdie.offset
+    return '/* <Die 0x%x> */' % tdie.offset
 
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
-    self.pr_ln('%s;' % st_var(die))
+    self.pr_ln('extern %s;' % st_var(die))
 
 def pr_member(self, die):
     self.pr_ln('%s;' % st_var(die))
@@ -366,7 +374,7 @@ def pr_user_type(self, die):
 def pr_subprogram(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
     tdie = DIE_typeof(die)
-    self.pr_ln('%s %s (' % (st_type(tdie), st_name(die)))
+    self.pr_ln('extern %s %s (' % (st_type(tdie), st_name(die)))
     self.ind_lvl += 1
     ch_l = [ch for ch in die.iter_children()]
     for ch in ch_l:

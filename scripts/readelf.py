@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #-------------------------------------------------------------------------------
 # scripts/readelf.py
 #
@@ -21,8 +21,8 @@ except:
 
 # For running from development directory. It should take precedence over the
 # installed pyelftools.
-sys.path.insert(0, '.')
-
+dev_dir = os.path.dirname(sys.argv[0]) + '/..'
+sys.path.insert(0, dev_dir)
 
 from elftools import __version__
 from elftools.common.exceptions import ELFError
