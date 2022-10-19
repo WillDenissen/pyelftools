@@ -21,7 +21,7 @@ except:
 
 # For running from development directory. It should take precedence over the
 # installed pyelftools.
-dev_dir = os.path.dirname(sys.argv[0]) + '/..'
+dev_dir = os.path.dirname(os.path.realpath(sys.argv[0])) + '/..'
 sys.path.insert(0, dev_dir)
 
 from elftools import __version__

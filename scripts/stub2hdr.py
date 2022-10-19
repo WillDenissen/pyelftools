@@ -16,7 +16,7 @@ import sys, os
 
 # For running from development directory. It should take precedence over the
 # installed pyelftools.
-dev_dir = os.path.dirname(sys.argv[0]) + '/..'
+dev_dir = os.path.dirname(os.path.realpath(sys.argv[0])) + '/..'
 sys.path.insert(0, dev_dir)
 
 from elftools import __version__
@@ -27,8 +27,9 @@ from elftools.dwarf.enums import ENUM_DW_ATE
 PROG = 'stub2hdr.py'
 
 def pr_exit(self, die):
-    print('ERROR: Stub files cannot contain dies of type %s' % die.tag)
-    sys.exit(1)
+    pass
+    # print('ERROR: Stub files cannot contain dies of type %s' % die.tag)
+    # sys.exit(1)
 
 def pr_skip(self, die):
     pass
@@ -228,7 +229,7 @@ def st_struct(tdie):
     return 'struct %s' % st_opt_name(tdie)
 
 def st_union(tdie):
-    return 'union %s' % st_name(tdie)
+    return 'union %s' % st_opt_name(tdie)
 
 def st_unspec_param(tdie):
     return '...'
@@ -586,6 +587,19 @@ SKIP_ANAME = (
     'DW_AT_high_pc'
     )
 
+def process_lib(args, ifnam):
+    if not ifnam.endswith('.so'): return
+    args.ifnam = ifnam
+    ofnam = '%s.h' % ifnam[3:-3]
+    print('... Processing file: <idir>/%s --> <odir>%s ...' % (ifnam, ofnam))
+    ifnam = args.idir +'/'+ifnam
+    opath = args.odir +'/'+ofnam
+
+    ofile = open(opath, 'w')
+    with open(ifnam, 'rb') as ifile:
+        dumper = DumpHeader(ifile, ofile, args)
+        dumper.dump_header()
+
 def main(stream=None):
     argparser = argparse.ArgumentParser(
             # usage='%(prog)s [options] <elf+dwarf-stubfile>',
@@ -621,31 +635,14 @@ def main(stream=None):
     print('... Reading from: %s ...' % args.idir)
     print('... Writing   to: %s ...' % args.odir)
 
-    for ifnam in os.listdir(args.idir):
-        if not ifnam.endswith('.so'): continue
-        args.ifnam = ifnam
-        ofnam = '%s.h' % ifnam[3:-3]
-        print('... Processing file: <idir>/%s --> <odir>%s ...' % (ifnam, ofnam))
-        ipath = args.idir +'/'+ifnam
-        opath = args.odir +'/'+ofnam
-
-        ofile = open(opath, 'w')
-        with open(ipath, 'rb') as ifile:
-            dumper = DumpHeader(ifile, ofile, args)
-            dumper.dump_header()
-
-def profile_main():
-    progbase = PROG[:-3]
-    PROFFILE = progbase+ '.profile'
-    import cProfile
-    cProfile.run("main(open('%s_out.txt', 'w'))" % progbase, PROFFILE)
-
-    # Dig in some profiling stats
-    import pstats
-    p = pstats.Stats(PROFFILE)
-    p.sort_stats('cumulative').print_stats(25)
+    if os.path.isdir(args.idir):
+        for ifnam in os.listdir(args.idir):
+            process_lib(args, ifnam)
+    else:
+        ifnam = os.path.basename(args.idir)
+        args.idir = os.path.dirname(args.idir)
+        process_lib(args, ifnam)
 
 #-------------------------------------------------------------------------------
 if __name__ == '__main__':
     main()
-    #profile_main()
