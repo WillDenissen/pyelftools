@@ -26,6 +26,10 @@ from elftools.dwarf.enums import ENUM_DW_ATE
 
 PROG = 'stub2hdr.py'
 
+
+def is_main_file(die):
+    return (DIE_attr(die, 'DW_AT_decl_file').value == 1) if DIE_has_attr(die, 'DW_AT_decl_file') else 1;
+
 def pr_exit(self, die):
     pass
     # print('ERROR: Stub files cannot contain dies of type %s' % die.tag)
@@ -223,7 +227,7 @@ def st_typedef(tdie):
     return st_name(tdie)
 
 def st_enum(tdie):
-    return 'enum %s' % st_name(tdie)
+    return 'enum %s' % st_opt_name(tdie)
 
 def st_struct(tdie):
     return 'struct %s' % st_opt_name(tdie)
@@ -234,9 +238,12 @@ def st_union(tdie):
 def st_unspec_param(tdie):
     return '...'
 
+def get_params(die):
+    return [ch for ch in die.iter_children() if ch.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and not DIE_has_attr(ch, 'DW_AT_artificial')]
+
 def st_subroutine(tdie):
-    prms_st = ', '.join(st_type(pdie) for pdie in tdie.iter_children() 
-    if pdie.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and not DIE_has_attr(pdie, 'DW_AT_artificial'))
+    pdie_l = get_params(tdie)
+    prms_st = ', '.join(st_type(pdie) for pdie in pdie_l)
     return '%s(%s)(%s)' % (st_type(DIE_typeof(tdie)), st_opt_name(tdie), prms_st)
 
 # dispatch table for st_type 
@@ -319,6 +326,7 @@ def st_type(tdie):
 
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
+    if not is_main_file(die): return
     self.pr_ln('extern %s;' % st_var(die))
 
 def pr_member(self, die):
@@ -328,6 +336,7 @@ def pr_param(self, die):
     self.pr_ln(st_var(die))
 
 def pr_typedef(self, die):
+    if not is_main_file(die): return
     self.pr_ln('typedef %s;' % st_var(die))
 
 def pr_varargs(self, die):
@@ -341,6 +350,7 @@ def pr_enumerator(self, die):
         self.pr_ln('%-50s' % name)
 
 def pr_enumeration_type(self, die):
+    if not is_main_file(die): return
     self.pr_ln('enum %s {' % st_opt_name(die))
     ch_l = [ch for ch in die.iter_children()]
     self.ind_lvl += 1
@@ -360,8 +370,8 @@ tag2usr_cls = dict(
 def pr_user_type(self, die):
     # skip anonymous user types at outer nesting
     # they will be printed in a named context
-    if not DIE_has_name(die) and self.nst_lvl == 0:
-        return
+    if not DIE_has_name(die) and self.nst_lvl == 0: return
+    if not is_main_file(die): return
 
     self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], st_opt_name(die)))
     self.ind_lvl += 1
@@ -372,15 +382,17 @@ def pr_user_type(self, die):
     self.ind_lvl -= 1
     self.pr_ln('};')
 
+
 def pr_subprogram(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
+    if not is_main_file(die): return
     tdie = DIE_typeof(die)
     self.pr_ln('extern %s %s (' % (st_type(tdie), st_name(die)))
     self.ind_lvl += 1
-    ch_l = [ch for ch in die.iter_children()]
-    for ch in ch_l:
-        self.pr_def(ch)
-        if  ch != ch_l[-1]:
+    pdie_l = get_params(die)
+    for pdie in pdie_l:
+        self.pr_def(pdie)
+        if  pdie != pdie_l[-1]:
             self.pr(',')
     self.ind_lvl -= 1
     self.pr_ln(');')
@@ -481,7 +493,7 @@ class HeaderDumper:
 
         elffile      = ELFFile(self.ifile)
         if not elffile.has_dwarf_info():
-            print('ERROR: file has no DWARF info')
+            print('ERROR: file has no DWARF info', file = sys.stderr)
             sys.exit(1)
 
         # get_dwarf_info returns a DWARFInfo context object, which is the
@@ -510,14 +522,16 @@ class HeaderDumper:
                 raise NotImplementedError('Only DWARF version >= 5 is supported')
 
         for tu in reversed(tu_l):
+            top_die = tu.get_top_DIE()
             guard = 'Type_%x' % tu['type_signature'] 
             self.pr('\n\n#ifndef %s' % guard)
             self.pr('\n#define %s' % guard)
-            self.pr_def(tu.get_top_DIE())
+            self.pr_def(top_die)
             self.pr('\n#endif')
 
         for cu in cu_l:
-            self.pr_def(cu.get_top_DIE())
+            top_die = cu.get_top_DIE()
+            self.pr_def(top_die)
 
         self.pr('\n// end of header\n')
 
@@ -591,7 +605,7 @@ def process_file(ipath, opath, args):
     ifile = open(ipath, 'rb') if ipath else sys.stdin
     ofile = open(opath, 'wb') if opath else sys.stdout
 
-    print('... Processing file: %s --> %s ...' % (ifile.name, ofile.name))
+    print('... Processing file: %s --> %s ...' % (ifile.name, ofile.name), file = sys.stderr)
 
     dumper = HeaderDumper(ifile, ofile, args)
     dumper.dump_header()
