@@ -390,15 +390,12 @@ def pr_subprogram(self, die):
     self.pr_ln('extern %s %s (' % (st_type(tdie), st_name(die)))
     self.ind_lvl += 1
     pdie_l = get_params(die)
-    for pdie in pdie_l:
-        self.pr_def(pdie)
-        if  pdie != pdie_l[-1]:
+    for ch in pdie_l:
+        self.pr_def(ch)
+        if  ch != pdie_l[-1]:
             self.pr(',')
     self.ind_lvl -= 1
     self.pr_ln(');')
-
-def pr_type_unit(self, die):
-    self.pr_children(die)
 
 def pr_compile_unit(self, die):
     self.pr_ln('// produced by: %s' % st_attr(die, 'DW_AT_producer'))
@@ -472,7 +469,7 @@ tag2pr_func = dict(
   #DW_TAG_mutable_type             = 
   #DW_TAG_condition                = 
   #DW_TAG_shared_type              = 
-  DW_TAG_type_unit                = pr_type_unit,
+  #DW_TAG_type_unit                 =
   #DW_TAG_rvalue_reference_type    = 
 )
 
@@ -522,18 +519,26 @@ class HeaderDumper:
                 raise NotImplementedError('Only DWARF version >= 5 is supported')
 
         for tu in reversed(tu_l):
-            top_die = tu.get_top_DIE()
-            guard = 'Type_%x' % tu['type_signature'] 
-            self.pr('\n\n#ifndef %s' % guard)
-            self.pr('\n#define %s' % guard)
-            self.pr_def(top_die)
-            self.pr('\n#endif')
+            self.pr_type_unit(tu)
 
         for cu in cu_l:
             top_die = cu.get_top_DIE()
             self.pr_def(top_die)
 
         self.pr('\n// end of header\n')
+
+    def pr_type_unit(self, tu):
+            tdie   = tu.get_top_DIE()
+            cdie_l = [cdie for cdie in tdie.iter_children()]
+            #if not is_main_file(cdie_l[0]): return 
+
+            guard  = 'Type_%x' % tu['type_signature'] 
+            self.pr('\n\n#ifndef %s' % guard)
+            self.pr('\n#define %s' % guard)
+            for cdie in cdie_l:
+                self.pr_def(cdie)
+            self.pr('\n#endif')
+
 
     def pr_def(self, die):
         ''' Prints the definition expressed by the DIE by dispatching it to the proper pr_???(self, die) function.
