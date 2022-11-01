@@ -516,20 +516,25 @@ class HeaderDumper:
         self.cu_ofs2pdie_l = self.collect_cu_ofs2die_l(self.pubnames)
 
 
+    def find_die(self, pent):
+        for cu in self.dwarfinfo.iter_CUs():
+            if cu.cu_offset == pent.cu_ofs:
+                for die in cu.iter_DIEs():
+                    if die.offset == pent.die_ofs:
+                        return die
+        self.pr_ln('ERROR: die with (cu_ofs=%x, die_ofs=%x) not found' % (pent.cu_ofs, pent.die_ofs))
+        
+
     def collect_cu_ofs2die_l(self, pubs):
         if pubs:
             cu_ofs2die_l = {}
             for name, pent in pubs.items():
                 # self.pr_ln('// %8x %8x %s' % (pent.cu_ofs, pent.die_ofs, name))
                 cu_ofs = pent.cu_ofs
-                for cu in self.dwarfinfo.iter_CUs():
-                    if cu.cu_offset == pent.cu_ofs:
-                        for die in cu.iter_DIEs():
-                            if die.offset == pent.die_ofs:
-                                break
-                # self.pr_tag(die)
-                cu_ofs2die_l[cu_ofs] = cu_ofs2die_l.get(cu_ofs, []) + [die]
-
+                die = self.find_die(pent)
+                if die:
+                    cu_ofs2die_l[cu_ofs] = cu_ofs2die_l.get(cu_ofs, []) + [die]
+                # TODO why are compile units in this list?
             return cu_ofs2die_l
 
     def dump_header(self):
@@ -550,38 +555,37 @@ class HeaderDumper:
         self.pr('\n// end of header\n')
 
     def dump_pub(self, cu):
-        self.pr_ln('// cu %s' % cu.get_top_DIE().get_full_path())
-        fnam_l = self.get_decl_files(cu)
+        fdcl_l = self.get_decl_files(cu)
         cu_ofs = cu.cu_offset
 
-        for cu_ofs2die_l in (self.cu_ofs2tdie_l, self.cu_ofs2pdie_l):
+        self.pr_ln('// cu %s' % fdcl_l[0])
+
+        for cu_ofs2die_l, name in ((self.cu_ofs2tdie_l, 'pubtypes'), (self.cu_ofs2pdie_l, 'pubnames')):
+            self.ind_lvl += 1
+            self.pr_ln('// defined %s:' % name)
+
+            self.ind_lvl += 1
             if cu_ofs2die_l and cu_ofs in cu_ofs2die_l:
                 for die in cu_ofs2die_l[cu_ofs]:
                     self.pr_tag(die)
-                    self.pr_attrs(die)
-                    # if die and DIE_has_attr(die, 'DW_AT_decl_file'):
-                    #     fidx = DIE_attr(die, 'DW_AT_decl_file').value 
-                    # else:
-                    #     fidx = 0
-                    # self.pr_ln('//    %-60s %s' % (st_opt_name(die), fnam_l[fidx]))
+                    if die and DIE_has_attr(die, 'DW_AT_decl_file'):
+                        fidx = DIE_attr(die, 'DW_AT_decl_file').value - 1
+                        self.pr(' %-60s %s' % (st_opt_name(die), fdcl_l[fidx]))
+                        # assert(die.get_parent().tag == DW_TAG_compile_unit)
+            self.ind_lvl -= 2
 
     def get_decl_files(self, cu):
-        fnam_l = []
+        fdcl_l = []
         lp     = self.dwarfinfo.line_program_for_CU(cu)
 
         if lp:
             # ver5 = lp.header.version >= 5
-            idir_l = [bytes2str(idir) for idir in lp.header['include_directory']]
-            for fent in lp.header['file_entry']:
-                fnam = bytes2str(fent.name)
-                didx = fent.dir_index
-                idir = (idir_l[didx - 1] + '/') if didx > 0 else ''
-                fnam_l.append('%s%s' % (idir , fnam))
+            idir_l = [os.path.dirname(cu.get_top_DIE().get_full_path())]
+            idir_l += [bytes2str(idir) for idir in lp.header['include_directory']]
+            for nr, fent in enumerate(lp.header['file_entry']):
+                fdcl_l.append('%s/%s' % (idir_l[fent.dir_index], bytes2str(fent.name)))
 
-        # for fnam in fnam_l:
-        #     self.pr_ln(fnam)
-
-        return fnam_l
+        return fdcl_l
 
     def pr_type_unit(self, tu):
             tdie   = tu.get_top_DIE()
@@ -625,6 +629,7 @@ class HeaderDumper:
             self.pr_ln('//   %-18s:   %s' % (aname[6:], st_attr(die, aname))) # trim 'DW_AT_'
     
     def pr_attrs(self, die):
+        if not die: return
         if self.args.verbosity:
             for aname in die.attributes:
                 if aname not in self.args.skip_aname:
