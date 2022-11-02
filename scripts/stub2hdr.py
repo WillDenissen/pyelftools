@@ -197,6 +197,10 @@ def st_attr(die, aname):
     attr = die.attributes[aname]
     return form2st_form[attr.form](die, attr.value) 
 
+def DIE_get_sig(die):
+    if die.get_parent().tag == 'DW_TAG_type_unit':
+        return die.cu['type_signature']
+
 def DIE_typeof(die):
     return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
 
@@ -215,8 +219,22 @@ def DIE_attr(die, aname):
 def st_name(die):
     return st_attr(die, 'DW_AT_name')
 
+tag2usr_cls = dict(
+    DW_TAG_enumeration_type = 'enum',
+    DW_TAG_structure_type   = 'struct',
+    DW_TAG_union_type       = 'union',
+    DW_TAG_class_type       = 'class',
+)
+
+
 def st_opt_name(die, default = '/* no name */'):
-    return st_name(die) if DIE_has_name(die) else default
+    if DIE_has_name(die):
+        return st_name(die)
+    sig = DIE_get_sig(die)
+    if sig:
+        return '%s_%x' % (tag2usr_cls[die.tag], sig)
+    else:
+        return default
 
 def st_base(tdie):
     return st_name(tdie)
@@ -356,24 +374,11 @@ def pr_enumeration_type(self, die):
     self.ind_lvl -= 1
     self.pr_ln('};')
 
-tag2usr_cls = dict(
-    DW_TAG_structure_type = 'struct',
-    DW_TAG_union_type     = 'union',
-    DW_TAG_class_type     = 'class',
-)
-
 def pr_user_type(self, die):
-    # skip anonymous user types at outer nesting
-    # they will be printed in a named context
-    if not DIE_has_name(die) and self.nst_lvl == 0: return
-
-
     self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], st_opt_name(die)))
     self.ind_lvl += 1
-    self.nst_lvl += 1
     for ch in die.iter_children():
         self.pr_def(ch)
-    self.nst_lvl -= 1
     self.ind_lvl -= 1
     self.pr_ln('};')
 
@@ -505,7 +510,6 @@ class HeaderDumper(object):
         self.ifile   = ifile
         self.ofile   = ofile
         self.ind_lvl = 0       # indentation level
-        self.nst_lvl = 0       # nesting level of user types
         self.args    = args
 
         elffile      = ELFFile(self.ifile)
@@ -608,15 +612,15 @@ class HeaderDumper(object):
         '''
 
         if die.tag in tag2pr_func:
-            in_tu = die.get_parent().tag == 'DW_TAG_type_unit'
-            if in_tu:
-                guard  = 'Type_%x' % die.cu['type_signature'] 
+            sig = DIE_get_sig(die)
+            if sig:
+                guard  = 'Type_%x' % sig 
                 self.pr('\n\n#ifndef %s' % guard)
                 self.pr('\n#define %s' % guard)
             self.pr_tag(die)
             self.pr_attrs(die)
             tag2pr_func[die.tag](self, die)
-            if in_tu:
+            if sig:
                 self.pr('\n#endif')
         else:
             self.pr_tag(die)
