@@ -13,6 +13,7 @@
 from collections import defaultdict
 import argparse
 import sys, os
+from typing import OrderedDict
 
 # For running from development directory. It should take precedence over the
 # installed pyelftools.
@@ -24,10 +25,6 @@ from elftools.elf.elffile import ELFFile
 from elftools.common.utils import bytes2str
 
 PROG = 'stub2hdr.py'
-
-
-def is_main_file(die):
-    return (DIE_attr(die, 'DW_AT_decl_file').value == 1) if DIE_has_attr(die, 'DW_AT_decl_file') else 1;
 
 def pr_exit(self, die):
     pass
@@ -96,10 +93,12 @@ def st_type_expr(tdie_l, name):
             txt = '__restrict %s' % txt
     return txt
 
-def st_var(die):
+def st_var(self, die):
     name           = st_opt_name(die)
     tdie           = DIE_typeof(die)
     tdie_l, chtdie = peel_off_types(tdie)
+    self.name2tdie.add_type(chtdie)
+
     cnst_st        = ''
     if len(tdie_l) and tdie_l[-1].tag == 'DW_TAG_const_type':
         tdie_l.pop()
@@ -325,18 +324,16 @@ def st_type(tdie):
 
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
-    if not is_main_file(die): return
-    self.pr_ln('extern %s;' % st_var(die))
+    self.pr_ln('extern %s;' % st_var(self, die))
 
 def pr_member(self, die):
-    self.pr_ln('%s;' % st_var(die))
+    self.pr_ln('%s;' % st_var(self, die))
 
 def pr_param(self, die):
-    self.pr_ln(st_var(die))
+    self.pr_ln(st_var(self, die))
 
 def pr_typedef(self, die):
-    if not is_main_file(die): return
-    self.pr_ln('typedef %s;' % st_var(die))
+    self.pr_ln('typedef %s;' % st_var(self, die))
 
 def pr_varargs(self, die):
     self.pr_ln('...')
@@ -349,7 +346,6 @@ def pr_enumerator(self, die):
         self.pr_ln('%-50s' % name)
 
 def pr_enumeration_type(self, die):
-    if not is_main_file(die): return
     self.pr_ln('enum %s {' % st_opt_name(die))
     ch_l = [ch for ch in die.iter_children()]
     self.ind_lvl += 1
@@ -370,7 +366,7 @@ def pr_user_type(self, die):
     # skip anonymous user types at outer nesting
     # they will be printed in a named context
     if not DIE_has_name(die) and self.nst_lvl == 0: return
-    if not is_main_file(die): return
+
 
     self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], st_opt_name(die)))
     self.ind_lvl += 1
@@ -384,7 +380,6 @@ def pr_user_type(self, die):
 
 def pr_subprogram(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
-    if not is_main_file(die): return
     tdie = DIE_typeof(die)
     self.pr_ln('extern %s %s (' % (st_type(tdie), st_name(die)))
     self.ind_lvl += 1
@@ -436,7 +431,7 @@ tag2pr_func = dict(
   #DW_TAG_subrange_type            = pr_subrange_type,
   DW_TAG_with_stmt                = pr_exit,
   #DW_TAG_access_declaration       = 
-  DW_TAG_base_type                = pr_skip,
+  #DW_TAG_base_type                = 
   DW_TAG_catch_block              = pr_exit,
   #DW_TAG_const_type               = 
   #DW_TAG_constant                 = 
@@ -472,7 +467,33 @@ tag2pr_func = dict(
   #DW_TAG_rvalue_reference_type    = 
 )
 
-class HeaderDumper:
+
+class UnresolvedTypes(object):
+    '''records all encountered types in an ordered list and wether they are resolved or not
+    '''
+
+    def __init__(self):
+        self.name2tdie = OrderedDict()
+        self.ures_idx  = 0
+
+    def add_type(self, tdie):
+        if tdie.tag == 'DW_TAG_base_type': return
+        name = st_opt_name(tdie)
+        if name not in self.name2tdie:
+            # print('\nadded new type %s' % name)
+            self.name2tdie[name] = tdie
+
+    def get_unresolved_types(self):
+        tdie_l = list(self.name2tdie.values())
+        ures_l = tdie_l[self.ures_idx:]
+        # print('\n #resolved %s #unresolved %s' % (self.ures_idx, len(ures_l)))
+        self.ures_idx += len(ures_l)
+        return ures_l
+
+    def __str__(self):
+        res = 'resolved'
+
+class HeaderDumper(object):
     def __init__(self, ifile, ofile, args):
         ''' dump header from the .debug_info section.
             ifile:
@@ -495,64 +516,57 @@ class HeaderDumper:
         # get_dwarf_info returns a DWARFInfo context object, which is the
         # starting point for all DWARF-based processing in pyelftools.
         self.dwarfinfo = elffile.get_dwarf_info()
-        self.pubnames  = self.dwarfinfo.get_pubnames()
-        self.pubtypes  = self.dwarfinfo.get_pubtypes()
-        self.cu_l      = []
-        self.tu_l      = []
-    
-        for cu in self.dwarfinfo.iter_CUs():
-            if cu['version'] >= 5:
-                unit_type = cu.header.unit_type
-                if unit_type == 'DW_UT_type':
-                    self.tu_l.append(cu)
-                elif unit_type == 'DW_UT_compile':
-                    self.cu_l.append(cu)
-                else:
-                    raise NotImplementedError('Only DW_UT_type and DW_UT_compile are supported')
-            else:
-                raise NotImplementedError('Only DWARF version >= 5 is supported')
+        self.pdie_l    = self._collect_pubnames() # all publically reachable symbol dies
+        self.name2tdie = UnresolvedTypes()        # all publically reachable unresolved type dies 
 
-        self.cu_ofs2tdie_l = self.collect_cu_ofs2die_l(self.pubtypes)
-        self.cu_ofs2pdie_l = self.collect_cu_ofs2die_l(self.pubnames)
+    def get_die_from_lut_entry(self, lent):
+        cu = self.dwarfinfo.get_CU_at(lent.cu_ofs)
+        for die in cu.iter_DIEs():
+            if die.offset == lent.die_ofs:
+                return die        
+        # return self.dwarfinfo.get_DIE_from_refaddr(lent.die_ofs, cu)
 
-
-    def find_die(self, pent):
-        for cu in self.dwarfinfo.iter_CUs():
-            if cu.cu_offset == pent.cu_ofs:
-                for die in cu.iter_DIEs():
-                    if die.offset == pent.die_ofs:
-                        return die
-        self.pr_ln('ERROR: die with (cu_ofs=%x, die_ofs=%x) not found' % (pent.cu_ofs, pent.die_ofs))
-        
-
-    def collect_cu_ofs2die_l(self, pubs):
-        if pubs:
-            cu_ofs2die_l = {}
-            for name, pent in pubs.items():
-                # self.pr_ln('// %8x %8x %s' % (pent.cu_ofs, pent.die_ofs, name))
-                cu_ofs = pent.cu_ofs
-                die = self.find_die(pent)
+    def _collect_pubnames(self):
+        pdie_l = []
+        pubnames = self.dwarfinfo.get_pubnames()
+        if pubnames:
+            for name, lent in pubnames.items():
+                die = self.get_die_from_lut_entry(lent)
+                # BUG die = self.dwarfinfo.get_die_from_lutentry(lent) DOES not work
                 if die:
-                    cu_ofs2die_l[cu_ofs] = cu_ofs2die_l.get(cu_ofs, []) + [die]
-                # TODO why are compile units in this list?
-            return cu_ofs2die_l
+                    dname = st_name(die)
+                    # self.pr_ln('// found %8x %8x %r --> %x %s %s' % (pent.cu_ofs, pent.die_ofs - pent.cu_ofs, name, die.offset, die.tag[7:], dname))
+                    if name != dname:
+                        print('ERROR pub name and die name dont match %s !=  %s' % (name, dname), file = sys.stderr)
+                    else:
+                        pdie_l.append(die)
+                else:
+                    print('ERROR:   %8x %8x %r --> not found, ignored' % (lent.cu_ofs, lent.die_ofs - lent.cu_ofs, name), file = sys.stderr)
+        return pdie_l
 
     def dump_header(self):
         ''' dump header from the elffile.
         '''
-        self.pr('// generated by  : %s' % PROG)
-        self.pr('\n// generated from: %s' % self.ifile.name)
+        self.pr_ln('// generated by  : %s' % PROG)
+        self.pr_ln('// generated from: %s' % self.ifile.name)
 
-        # for tu in reversed(self.tu_l):
-        #     self.dump_pub(tu)
-        #     self.pr_type_unit(tu)
+        prev_fpth = None
+        for pdie in self.pdie_l:
+            fpth = pdie.get_parent().get_full_path()
+            if fpth != prev_fpth:
+                self.pr_ln('// processing public symbols in file %s ...' % fpth)
+            prev_fpth = fpth
+            self.pr_def(pdie)
 
-        for cu in self.cu_l:
-            self.dump_pub(cu)
-            # tdie = cu.get_top_DIE()
-            # self.pr_def(tdie)
+        self.pr_ln('// referenced types')
 
-        self.pr('\n// end of header\n')
+        while True:
+            tdie_l = self.name2tdie.get_unresolved_types()
+            if not len(tdie_l): break
+            for tdie in tdie_l:
+                self.pr_def(tdie)
+
+        self.pr_ln('// end of header\n')
 
     def dump_pub(self, cu):
         fdcl_l = self.get_decl_files(cu)
@@ -587,33 +601,28 @@ class HeaderDumper:
 
         return fdcl_l
 
-    def pr_type_unit(self, tu):
-            tdie   = tu.get_top_DIE()
-            self.pr_ln('// tu %s' % tdie.get_full_path())
-            # cdie_l = [cdie for cdie in tdie.iter_children()]
-            #if not is_main_file(cdie_l[0]): return 
-
-            # guard  = 'Type_%x' % tu['type_signature'] 
-            # self.pr('\n\n#ifndef %s' % guard)
-            # self.pr('\n#define %s' % guard)
-            # for cdie in cdie_l:
-            #     self.pr_def(cdie)
-            # self.pr('\n#endif')
-
-
     def pr_def(self, die):
         ''' Prints the definition expressed by the DIE by dispatching it to the proper pr_???(self, die) function.
             die:
                 die to print definition of.
         '''
+
         if die.tag in tag2pr_func:
+            in_tu = die.get_parent().tag == 'DW_TAG_type_unit'
+            if in_tu:
+                guard  = 'Type_%x' % die.cu['type_signature'] 
+                self.pr('\n\n#ifndef %s' % guard)
+                self.pr('\n#define %s' % guard)
             self.pr_tag(die)
             self.pr_attrs(die)
             tag2pr_func[die.tag](self, die)
+            if in_tu:
+                self.pr('\n#endif')
         else:
             self.pr_tag(die)
             self.pr_attrs(die)
             self.pr_children(die)
+
 
     def pr_tag(self, die):
         if 'f' in self.args.verbosity:
