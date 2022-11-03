@@ -27,14 +27,6 @@ from elftools.common.utils import bytes2str
 
 PROG = 'stub2hdr.py'
 
-def pr_exit(self, die):
-    pass
-    # print('ERROR: Stub files cannot contain dies of type %s' % die.tag, file = sys.stderr)
-    # sys.exit(1)
-
-def pr_skip(self, die):
-    pass
-
 def st_subrange(die):
     if DIE_has_attr(die, 'DW_AT_upper_bound'):
         return '[%s]' % (DIE_attr(die, 'DW_AT_upper_bound').value + 1, )
@@ -93,17 +85,6 @@ def st_type_expr(tdie_l, name):
         elif tdie.tag in 'DW_TAG_restrict_type':
             txt = '__restrict %s' % txt
     return txt
-
-def st_var(self, die):
-    name           = st_opt_name(die)
-    tdie           = DIE_typeof(die)
-    tdie_l, chtdie = peel_off_types(tdie)
-
-    cnst_st        = ''
-    if len(tdie_l) and tdie_l[-1].tag == 'DW_TAG_const_type':
-        tdie_l.pop()
-        cnst_st = 'const '
-    return  '%s%s %s' % (cnst_st, st_type(self, chtdie), st_type_expr(tdie_l, name)) 
 
 def st_form_dflt(die, val):
     return '%s' % val
@@ -197,28 +178,6 @@ def st_attr(die, aname):
     attr = die.attributes[aname]
     return form2st_form[attr.form](die, attr.value) 
 
-def DIE_has_file_scope(die):
-    return die.get_parent().get_parent() == None
-
-def DIE_get_sig(die):
-    if die.get_parent().tag == 'DW_TAG_type_unit':
-        return die.cu['type_signature']
-
-def DIE_typeof(die):
-    return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
-
-def DIE_has_name(die):
-    return DIE_has_attr(die, 'DW_AT_name')
-
-def DIE_has_type(die):
-    return die and DIE_has_attr(die, 'DW_AT_type')
-    
-def DIE_has_attr(die, aname):
-    return aname in die.attributes
-
-def DIE_attr(die, aname):
-    return die.attributes[aname]
-
 def st_name(die):
     return st_attr(die, 'DW_AT_name')
 
@@ -229,7 +188,6 @@ tag2usr_cls = dict(
     DW_TAG_class_type       = 'class',
 )
 
-
 def st_opt_name(die, default = '/* no name */'):
     if DIE_has_name(die):
         return st_name(die)
@@ -239,250 +197,31 @@ def st_opt_name(die, default = '/* no name */'):
     else:
         return default
 
+def DIE_get_sig(die):
+    if die.get_parent().tag == 'DW_TAG_type_unit':
+        return die.cu['type_signature']
+
+def DIE_typeof(die):
+    return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
+
+def DIE_attr(die, aname):
+    return die.attributes[aname]
+
+def DIE_name(die):
+    return bytes2str(DIE_attr(die, 'DW_AT_name').value)
+
+def DIE_has_attr(die, aname):
+    return aname in die.attributes
+
+def DIE_has_name(die):
+    return die and DIE_has_attr(die, 'DW_AT_name')
+
+def DIE_has_type(die):
+    return die and DIE_has_attr(die, 'DW_AT_type')
+
+
 def get_params(die):
     return [ch for ch in die.iter_children() if ch.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and not DIE_has_attr(ch, 'DW_AT_artificial')]
-
-
-# st_<x>(self, tdie) dispatch functions
-def st_base(self, tdie):
-    return st_name(tdie)
-
-def st_typedef(self, tdie):
-    return st_name(tdie)
-
-def st_enum(self, tdie):
-    return 'enum %s' % st_opt_name(tdie)
-
-def st_struct(self, tdie):
-    return 'struct %s' % st_opt_name(tdie)
-
-def st_union(self, tdie):
-    return 'union %s' % st_opt_name(tdie)
-
-def st_unspec_param(self, tdie):
-    return '...'
-
-def st_subroutine(self, tdie):
-    pdie_l = get_params(tdie)
-    prms_st = ', '.join(st_type(self, pdie) for pdie in pdie_l)
-    return '%s(%s)(%s)' % (st_type(self, DIE_typeof(tdie)), st_opt_name(tdie), prms_st)
-
-# dispatch table for st_type(self, die)
-# contains st_<x>(self, die) -> string functions
-# tags that cannot exist in a ELF stub will be mapped on st_exit
-tag2st_func = dict(
-  #DW_TAG_null                     =
-  #DW_TAG_array_type               = see st_type_expr
-  #DW_TAG_class_type               = st_class,
-  #DW_TAG_entry_point              =
-  DW_TAG_enumeration_type         = st_enum,
-  #DW_TAG_formal_parameter         =
-  #DW_TAG_imported_declaration     =
-  #DW_TAG_label                    =
-  #DW_TAG_lexical_block            =
-  #DW_TAG_member                   =
-  #DW_TAG_pointer_type             = see st_type_expr
-  #DW_TAG_reference_type           = see st_type_expr
-  #DW_TAG_compile_unit             =
-  #DW_TAG_string_type              =
-  DW_TAG_structure_type           = st_struct,
-  DW_TAG_subroutine_type          = st_subroutine,
-  DW_TAG_typedef                  = st_typedef,
-  DW_TAG_union_type               = st_union,
-  DW_TAG_unspecified_parameters   = st_unspec_param,
-  #DW_TAG_variant                  =
-  #DW_TAG_common_block             =
-  #DW_TAG_common_inclusion         =
-  #DW_TAG_inheritance              =
-  #DW_TAG_inlined_subroutine       =
-  #DW_TAG_module                   =
-  #DW_TAG_ptr_to_member_type       =
-  #DW_TAG_set_type                 =
-  #DW_TAG_subrange_type            =
-  #DW_TAG_with_stmt                =
-  #DW_TAG_access_declaration       =
-  DW_TAG_base_type                = st_base,
-  #DW_TAG_catch_block              =
-  #DW_TAG_const_type               = see st_type_expr
-  #DW_TAG_constant                 =
-  #DW_TAG_enumerator               =
-  #DW_TAG_file_type                =
-  #DW_TAG_friend                   =
-  #DW_TAG_namelist                 =
-  #DW_TAG_namelist_item            =
-  #DW_TAG_namelist_items           =
-  #DW_TAG_packed_type              =
-  #DW_TAG_subprogram               =
-  #DW_TAG_template_type_parameter  =
-  #DW_TAG_template_type_param      =
-  #DW_TAG_template_value_parameter =
-  #DW_TAG_template_value_param     =
-  #DW_TAG_thrown_type              =
-  #DW_TAG_try_block                =
-  #DW_TAG_variant_part             =
-  #DW_TAG_variable                 =
-  #DW_TAG_volatile_type            =
-  #DW_TAG_dwarf_procedure          =
-  #DW_TAG_restrict_type            = see st_type_expr
-  #DW_TAG_interface_type           =
-  #DW_TAG_namespace                =
-  #DW_TAG_imported_module          =
-  #DW_TAG_unspecified_type         =
-  #DW_TAG_partial_unit             =
-  #DW_TAG_imported_unit            =
-  #DW_TAG_mutable_type             =
-  #DW_TAG_condition                =
-  #DW_TAG_shared_type              =
-  #DW_TAG_type_unit                =
-  #DW_TAG_rvalue_reference_type    =
-)
-
-# TODO strip modifiers and dimensions
-def st_type(self, tdie):
-    if tdie == None:
-        return 'void'
-    if tdie.tag in tag2st_func:
-        self.name2tdie.add_type(tdie)
-        return tag2st_func[tdie.tag](self, tdie)
-    return '/* <Die 0x%x> */' % tdie.offset
-
-
-# pr_<x>(self, die) dispatch functions
-
-def pr_variable(self, die):
-    if not DIE_has_attr(die, 'DW_AT_external'): return
-    self.pr_ln('extern %s;' % st_var(self, die))
-
-def pr_member(self, die):
-    self.pr_ln('%s;' % st_var(self, die))
-
-def pr_param(self, die):
-    self.pr_ln(st_var(self, die))
-
-def pr_typedef(self, die):
-    self.pr_ln('typedef %s;' % st_var(self, die))
-
-def pr_varargs(self, die):
-    self.pr_ln('...')
-
-def pr_enumerator(self, die):
-    name = st_name(die)
-    if DIE_has_attr(die, 'DW_AT_const_value'):
-        self.pr_ln('%-50s = %s' % (name, st_attr(die, 'DW_AT_const_value')))
-    else:
-        self.pr_ln('%-50s' % name)
-
-def pr_enumeration_type(self, die):
-    self.pr_ln('enum %s {' % st_opt_name(die))
-    ch_l = [ch for ch in die.iter_children()]
-    self.ind_lvl += 1
-    for ch in ch_l:
-        self.pr_def(ch)
-        if ch != ch_l[-1]:
-            self.pr(',')
-    self.ind_lvl -= 1
-    self.pr_ln('};')
-
-def pr_user_type(self, die):
-    self.pr_ln('%s %s' % (tag2usr_cls[die.tag], st_opt_name(die)))
-    if DIE_has_file_scope(die) or not DIE_has_name(die):
-        self.pr('{')
-        self.ind_lvl += 1
-        for ch in die.iter_children():
-            self.pr_def(ch)
-        self.ind_lvl -= 1
-        self.pr_ln('}')
-    self.pr(';')
-
-def pr_subprogram(self, die):
-    if not DIE_has_attr(die, 'DW_AT_external'): return
-    tdie = DIE_typeof(die)
-    self.pr_ln('extern %s %s (' % (st_type(self, tdie), st_name(die)))
-    self.ind_lvl += 1
-    pdie_l = get_params(die)
-    for ch in pdie_l:
-        self.pr_def(ch)
-        if  ch != pdie_l[-1]:
-            self.pr(',')
-    self.ind_lvl -= 1
-    self.pr_ln(');')
-
-def pr_compile_unit(self, die):
-    self.pr_ln('// produced by: %s' % st_attr(die, 'DW_AT_producer'))
-    self.pr_ln('// symbols of : %s' % st_name(die))
-    self.pr_children(die)
-
-# dispatch table for pr_def(self, die)
-# contains all pr_<x>(self, die) functions
-# contains only type/variable/function definition tags
-# tags that cannot exist in a ELF stub will be mapped on pr_exit
-tag2pr_func = dict(
-  DW_TAG_null                     = pr_exit,
-  #DW_TAG_array_type               =
-  DW_TAG_class_type               = pr_user_type,
-  DW_TAG_entry_point              = pr_exit,
-  DW_TAG_enumeration_type         = pr_enumeration_type,
-  DW_TAG_formal_parameter         = pr_param,
-  DW_TAG_imported_declaration     = pr_exit,
-  DW_TAG_label                    = pr_exit,
-  DW_TAG_lexical_block            = pr_exit,
-  DW_TAG_member                   = pr_member,
-  #DW_TAG_pointer_type             =
-  #DW_TAG_reference_type           =
-  DW_TAG_compile_unit             = pr_compile_unit, 
-  #DW_TAG_string_type              = 
-  DW_TAG_structure_type           = pr_user_type,
-  #DW_TAG_subroutine_type          = 
-  DW_TAG_typedef                  = pr_typedef,
-  DW_TAG_union_type               = pr_user_type,
-  DW_TAG_unspecified_parameters   = pr_varargs,
-  #DW_TAG_variant                  = 
-  DW_TAG_common_block             = pr_exit,
-  #DW_TAG_common_inclusion         = 
-  #DW_TAG_inheritance              = 
-  #DW_TAG_inlined_subroutine       = 
-  #DW_TAG_module                   = 
-  #DW_TAG_ptr_to_member_type       = 
-  #DW_TAG_set_type                 = 
-  #DW_TAG_subrange_type            = pr_subrange_type,
-  DW_TAG_with_stmt                = pr_exit,
-  #DW_TAG_access_declaration       = 
-  #DW_TAG_base_type                = 
-  DW_TAG_catch_block              = pr_exit,
-  #DW_TAG_const_type               = 
-  #DW_TAG_constant                 = 
-  DW_TAG_enumerator               = pr_enumerator,
-  #DW_TAG_file_type                = 
-  #DW_TAG_friend                   = 
-  #DW_TAG_namelist                 = 
-  #DW_TAG_namelist_item            = 
-  #DW_TAG_namelist_items           = 
-  #DW_TAG_packed_type              = 
-  DW_TAG_subprogram               = pr_subprogram,
-  #DW_TAG_template_type_parameter  = 
-  #DW_TAG_template_type_param      = 
-  #DW_TAG_template_value_parameter = 
-  #DW_TAG_template_value_param     = 
-  #DW_TAG_thrown_type              = 
-  DW_TAG_try_block                = pr_exit,
-  #DW_TAG_variant_part             = 
-  DW_TAG_variable                 = pr_variable, 
-  #DW_TAG_volatile_type            = 
-  #DW_TAG_dwarf_procedure          = 
-  #DW_TAG_restrict_type            = 
-  #DW_TAG_interface_type           = 
-  #DW_TAG_namespace                = 
-  #DW_TAG_imported_module          = 
-  #DW_TAG_unspecified_type         = 
-  #DW_TAG_partial_unit             = 
-  #DW_TAG_imported_unit            = 
-  #DW_TAG_mutable_type             = 
-  #DW_TAG_condition                = 
-  #DW_TAG_shared_type              = 
-  #DW_TAG_type_unit                 =
-  #DW_TAG_rvalue_reference_type    = 
-)
-
 
 class UnresolvedTypes(object):
     '''records all encountered types in an ordered list and wether they are resolved or not
@@ -496,13 +235,13 @@ class UnresolvedTypes(object):
         if tdie.tag == 'DW_TAG_base_type': return
         name = st_opt_name(tdie)
         if name not in self.name2tdie:
-            # print('\nadded new type %s' % name)
+            # log('\nadded new type %s' % name)
             self.name2tdie[name] = tdie
 
     def get_unresolved_types(self):
         tdie_l = list(self.name2tdie.values())
         ures_l = tdie_l[self.ures_idx:]
-        # print('\n #resolved %s #unresolved %s' % (self.ures_idx, len(ures_l)))
+        # log('\n #resolved %s #unresolved %s' % (self.ures_idx, len(ures_l)))
         self.ures_idx += len(ures_l)
         return ures_l
 
@@ -526,7 +265,7 @@ class HeaderDumper(object):
 
         elffile      = ELFFile(self.ifile)
         if not elffile.has_dwarf_info():
-            print('ERROR: file has no DWARF info', file = sys.stderr)
+            log('ERROR: file has no DWARF info')
             sys.exit(1)
 
         # get_dwarf_info returns a DWARFInfo context object, which is the
@@ -550,32 +289,34 @@ class HeaderDumper(object):
                 die = self.get_die_from_lut_entry(lent)
                 # BUG die = self.dwarfinfo.get_die_from_lutentry(lent) DOES not work
                 if die and DIE_has_name(die):
-                    dname = st_name(die)
+                    dname = DIE_name(die)
                     # self.pr_ln('// found %8x %8x %r --> %x %s %s' % (pent.cu_ofs, pent.die_ofs - pent.cu_ofs, name, die.offset, die.tag[7:], dname))
                     if name != dname:
-                        print('ERROR pub name and die name don\'t match %r !=  %r' % (name, dname), file = sys.stderr)
+                        log('ERROR pub name and die name don\'t match %r !=  %r' % (name, dname))
                     else:
                         pdie_l.append(die)
                 else:
-                    print('ERROR:   %8x %8x %r --> not found, ignored' % (lent.cu_ofs, lent.die_ofs - lent.cu_ofs, name), file = sys.stderr)
+                    log('ERROR:   %8x %8x %r --> not found, ignored' % (lent.cu_ofs, lent.die_ofs - lent.cu_ofs, name))
         return pdie_l
 
-    def dump_header(self):
-        ''' dump header from the elffile.
-        '''
+    def add_ref(self, die):
+        self.name2tdie.add_type(die)
+        
+    def dump_symb_defs(self):
         sdef_l = []
-        prev_fpth = None
+        prev_cu = None
         for pdie in self.pdie_l:
             # makes all pr functions write to this StringIO
             with StringIO() as self.tfile:  
-                fpth = pdie.get_parent().get_full_path()
-                if fpth != prev_fpth:
-                    self.pr_ln('// processing public symbols in file %s ...' % fpth)
-                prev_fpth = fpth
-                self.pr_def(pdie)
+                if pdie.cu != prev_cu:
+                    self.pr_compile_unit(pdie.cu)
+                prev_cu = pdie.cu
+                self.pr_def(pdie, as_ref = False)
                 sdef = self.tfile.getvalue()
                 sdef_l.append(sdef)
+        return sdef_l
 
+    def dump_type_defs(self):
         tdef_l = []
         while True:
             tdie_l = self.name2tdie.get_unresolved_types()
@@ -583,9 +324,16 @@ class HeaderDumper(object):
             for tdie in tdie_l:
                 # makes all pr functions write to this StringIO
                 with StringIO() as self.tfile:
-                    self.pr_def(tdie)
+                    self.pr_def(tdie, as_ref = False)
                     tdef = self.tfile.getvalue()
                     tdef_l.append(tdef)
+        return tdef_l
+
+    def dump_header(self):
+        ''' dump header from the elffile.
+        '''
+        sdef_l = self.dump_symb_defs()
+        tdef_l = self.dump_type_defs()
 
         self.tfile = self.ofile
         self.pr_ln('// generated by  : %s' % PROG)
@@ -631,7 +379,152 @@ class HeaderDumper(object):
 
         return fdcl_l
 
-    def pr_def(self, die):
+    # pr_<x>(self, die, as_ref) functions
+    def pr_base(self, die, as_ref):
+        if as_ref:
+            self.pr(st_name(die))
+
+    def pr_member(self, die, as_ref):
+        self.pr_ln()
+        self.pr_var(die, as_ref)
+        self.pr(';')
+
+    def pr_param(self, die, as_ref):
+        self.pr_ln()
+        self.pr_var(die, as_ref)
+
+    def pr_typedef(self, die, as_ref):
+        if as_ref:
+            self.pr(st_name(die))
+            self.add_ref(die)
+        else:
+            self.pr_ln('typedef ')
+            self.pr_var(die, as_ref)
+            self.pr(';')
+
+    def pr_varargs(self, die, as_ref):
+        self.pr_ln('...')
+
+    def pr_enumerator(self, die, as_ref):
+        self.pr_ln('%-50s' % st_name(die))
+        if DIE_has_attr(die, 'DW_AT_const_value'):
+            self.pr(' = %s' % st_attr(die, 'DW_AT_const_value'))
+
+    def pr_enumeration_type(self, die, as_ref):
+        self.pr_ln('enum %s {' % st_opt_name(die))
+        ch_l = [ch for ch in die.iter_children()]
+        self.ind_lvl += 1
+        for ch in ch_l:
+            self.pr_def(ch, as_ref = False)
+            if ch != ch_l[-1]:
+                self.pr(',')
+        self.ind_lvl -= 1
+        self.pr_ln('};')
+
+    def pr_user_type(self, die, as_ref):
+        self.pr_ln('%s %s' % (tag2usr_cls[die.tag], st_opt_name(die)))
+        if as_ref:
+            self.add_ref(die)
+        else:
+            self.pr(' {')
+            self.ind_lvl += 1
+            for ch in die.iter_children():
+                self.pr_def(ch, as_ref = True)
+            self.ind_lvl -= 1
+            self.pr_ln('}')
+            self.pr(';')
+
+    def pr_variable(self, die, as_ref):
+        if not DIE_has_attr(die, 'DW_AT_external'): return
+        self.pr_ln('extern ')
+        self.pr_var(die, as_ref)
+        self.pr(';')
+
+    def pr_subprogram(self, die, as_ref):
+        if DIE_has_attr(die, 'DW_AT_external'):
+            self.pr_ln('extern ')
+        tdie = DIE_typeof(die)
+        self.pr_def(tdie, as_ref = True)
+        self.pr(' %s (' % st_opt_name(die))
+        self.ind_lvl += 1
+        chdie_l = get_params(die)
+        for chdie in chdie_l:
+            self.pr_def(chdie, as_ref = False)
+            if  chdie != chdie_l[-1]:
+                self.pr(',')
+        self.ind_lvl -= 1
+        self.pr_ln(');')
+
+    # dispatch table for pr_def(self, die, as_ref)
+    # maps tag --> pr_<x>(self, die, as_ref) functions
+    tag2pr_func = dict(
+    # DW_TAG_null                     =
+    # DW_TAG_array_type               =
+    DW_TAG_class_type               = pr_user_type,
+    # DW_TAG_entry_point              =
+    DW_TAG_enumeration_type         = pr_enumeration_type,
+    DW_TAG_formal_parameter         = pr_param,
+    # DW_TAG_imported_declaration     =
+    # DW_TAG_label                    =
+    # DW_TAG_lexical_block            =
+    DW_TAG_member                   = pr_member,
+    # DW_TAG_pointer_type             =
+    # DW_TAG_reference_type           =
+    # DW_TAG_compile_unit             = 
+    # DW_TAG_string_type              = 
+    DW_TAG_structure_type           = pr_user_type,
+    DW_TAG_subroutine_type          = pr_subprogram,
+    DW_TAG_typedef                  = pr_typedef,
+    DW_TAG_union_type               = pr_user_type,
+    DW_TAG_unspecified_parameters   = pr_varargs,
+    # DW_TAG_variant                  = 
+    # DW_TAG_common_block             =
+    # DW_TAG_common_inclusion         = 
+    # DW_TAG_inheritance              = 
+    # DW_TAG_inlined_subroutine       = 
+    # DW_TAG_module                   = 
+    # DW_TAG_ptr_to_member_type       = 
+    # DW_TAG_set_type                 = 
+    # DW_TAG_subrange_type            = pr_subrange_type,
+    # DW_TAG_with_stmt                =
+    # DW_TAG_access_declaration       = 
+    DW_TAG_base_type                = pr_base,
+    # DW_TAG_catch_block              =
+    # DW_TAG_const_type               = 
+    # DW_TAG_constant                 = 
+    DW_TAG_enumerator               = pr_enumerator,
+    # DW_TAG_file_type                = 
+    # DW_TAG_friend                   = 
+    # DW_TAG_namelist                 = 
+    # DW_TAG_namelist_item            = 
+    # DW_TAG_namelist_items           = 
+    # DW_TAG_packed_type              = 
+    DW_TAG_subprogram               = pr_subprogram,
+    # DW_TAG_template_type_parameter  = 
+    # DW_TAG_template_type_param      = 
+    # DW_TAG_template_value_parameter = 
+    # DW_TAG_template_value_param     = 
+    # DW_TAG_thrown_type              = 
+    # DW_TAG_try_block                =
+    # DW_TAG_variant_part             = 
+    DW_TAG_variable                 = pr_variable, 
+    # DW_TAG_volatile_type            = 
+    # DW_TAG_dwarf_procedure          = 
+    # DW_TAG_restrict_type            = 
+    # DW_TAG_interface_type           = 
+    # DW_TAG_namespace                = 
+    # DW_TAG_imported_module          = 
+    # DW_TAG_unspecified_type         = 
+    # DW_TAG_partial_unit             = 
+    # DW_TAG_imported_unit            = 
+    # DW_TAG_mutable_type             = 
+    # DW_TAG_condition                = 
+    # DW_TAG_shared_type              = 
+    # DW_TAG_type_unit                =
+    # DW_TAG_rvalue_reference_type    = 
+    )
+
+    def pr_def(self, die, as_ref):
         ''' Prints the definition expressed by the DIE by dispatching it to the proper pr_???(self, die) function.
             die:
                 die to print definition of.
@@ -640,26 +533,39 @@ class HeaderDumper(object):
         if die == None: 
             self.pr('void')
             return
-        if die.tag in tag2pr_func:
+        self.log_die(die, as_ref)
+        if die.tag in self.tag2pr_func:
             sig = DIE_get_sig(die)
             if sig:
                 guard  = 'Type_%x' % sig 
                 self.pr('\n\n#ifndef %s' % guard)
                 self.pr('\n#define %s' % guard)
-            self.pr_tag(die)
-            self.pr_attrs(die)
-            tag2pr_func[die.tag](self, die)
+            self.tag2pr_func[die.tag](self, die, as_ref)
             if sig:
                 self.pr('\n#endif')
         else:
-            self.pr_tag(die)
-            self.pr_attrs(die)
-            self.pr_children(die)
+            self.pr_children(die, as_ref = True)
 
+    def pr_compile_unit(self, cu):
+        die  = cu.get_top_DIE()
+        fpth = die.get_full_path()
+        self.pr_ln('//   produced by: %s' % st_attr(die, 'DW_AT_producer'))
+        self.pr_ln('//   pubnames of: %s' % fpth)
+
+    def pr_var(self, die, as_ref):
+        name           = st_opt_name(die)
+        tdie           = DIE_typeof(die)
+        tdie_l, chtdie = peel_off_types(tdie)
+        if len(tdie_l) and tdie_l[-1].tag == 'DW_TAG_const_type':
+            tdie_l.pop()
+            self.pr('const ')
+
+        self.pr_def(chtdie, as_ref = True)
+        self.pr(' ' + st_type_expr(tdie_l, name))
 
     def pr_tag(self, die):
         if 'f' in self.args.verbosity:
-            self.pr_ln('// 0x%x: %s, size=%s, has_children=%s' % (
+            self.pr_ln('// 0x%x: %s, size = %s, has_children = %s' % (
             die.offset, die.tag, die.size, die.has_children))
         elif 't' in self.args.verbosity:
             self.pr_ln('// 0x%x: %s' % (die.offset, die.tag[7:]))        # trim 'DW_TAG_'
@@ -672,24 +578,30 @@ class HeaderDumper(object):
     
     def pr_attrs(self, die):
         if not die: return
-        if self.args.verbosity:
-            for aname in die.attributes:
-                if aname not in self.args.skip_aname:
-                    self.pr_attr(die, aname)
+        for aname in die.attributes:
+            if aname not in self.args.skip_aname:
+                self.pr_attr(die, aname)
 
-    def pr_children(self, die):        
+    def log_die(self, die, as_ref):
+        if self.args.verbosity:
+            self.pr_ln('// as_ref = %s' % as_ref)
+            self.pr_tag(die)
+            self.pr_attrs(die)
+            self.pr_ln()
+
+    def pr_children(self, die, as_ref):
         self.ind_lvl += 1
         for ch in die.iter_children():
-            self.pr_def(ch) 
+            self.pr_def(ch, as_ref) 
         self.ind_lvl -= 1
  
-    def pr_ln(self, txt):
+    def pr_ln(self, txt = ''):
         '''returns txt on a new line with the current indentation'''
         self.pr('\n%*s%s' % (2*self.ind_lvl, '', txt))
 
     def pr(self, txt):
         '''writes txt to tmp file'''
-        print(txt, file = self.tfile)
+        self.tfile.write(txt)
 
 SCRIPT_DESCRIPTION = 'Extract header file from an ELF/DWARF formatted stub file'
 VERSION_STRING = '%%(prog)s: based on pyelftools %s' % __version__
@@ -710,11 +622,15 @@ SKIP_ANAME = (
     'DW_AT_high_pc'
     )
 
+def log(*arg, **kw):
+    print(*arg, **kw, file = sys.stderr)
+
+
 def process_file(ipath, opath, args):
     ifile = open(ipath, 'rb') if ipath else sys.stdin
     ofile = open(opath, 'w') if opath else sys.stdout
 
-    print('... Processing file: %s --> %s ...' % (ifile.name, ofile.name), file = sys.stderr)
+    log('... Processing file: %s --> %s ...' % (ifile.name, ofile.name))
 
     dumper = HeaderDumper(ifile, ofile, args)
     dumper.dump_header()
