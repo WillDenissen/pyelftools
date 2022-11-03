@@ -98,13 +98,12 @@ def st_var(self, die):
     name           = st_opt_name(die)
     tdie           = DIE_typeof(die)
     tdie_l, chtdie = peel_off_types(tdie)
-    self.name2tdie.add_type(chtdie)
 
     cnst_st        = ''
     if len(tdie_l) and tdie_l[-1].tag == 'DW_TAG_const_type':
         tdie_l.pop()
         cnst_st = 'const '
-    return  '%s%s %s' % (cnst_st, st_type(chtdie), st_type_expr(tdie_l, name)) 
+    return  '%s%s %s' % (cnst_st, st_type(self, chtdie), st_type_expr(tdie_l, name)) 
 
 def st_form_dflt(die, val):
     return '%s' % val
@@ -198,6 +197,9 @@ def st_attr(die, aname):
     attr = die.attributes[aname]
     return form2st_form[attr.form](die, attr.value) 
 
+def DIE_has_file_scope(die):
+    return die.get_parent().get_parent() == None
+
 def DIE_get_sig(die):
     if die.get_parent().tag == 'DW_TAG_type_unit':
         return die.cu['type_signature']
@@ -237,34 +239,36 @@ def st_opt_name(die, default = '/* no name */'):
     else:
         return default
 
-def st_base(tdie):
-    return st_name(tdie)
-
-def st_typedef(tdie):
-    return st_name(tdie)
-
-def st_enum(tdie):
-    return 'enum %s' % st_opt_name(tdie)
-
-def st_struct(tdie):
-    return 'struct %s' % st_opt_name(tdie)
-
-def st_union(tdie):
-    return 'union %s' % st_opt_name(tdie)
-
-def st_unspec_param(tdie):
-    return '...'
-
 def get_params(die):
     return [ch for ch in die.iter_children() if ch.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and not DIE_has_attr(ch, 'DW_AT_artificial')]
 
-def st_subroutine(tdie):
-    pdie_l = get_params(tdie)
-    prms_st = ', '.join(st_type(pdie) for pdie in pdie_l)
-    return '%s(%s)(%s)' % (st_type(DIE_typeof(tdie)), st_opt_name(tdie), prms_st)
 
-# dispatch table for st_type 
-# contains st_<x>(die) -> string functions
+# st_<x>(self, tdie) dispatch functions
+def st_base(self, tdie):
+    return st_name(tdie)
+
+def st_typedef(self, tdie):
+    return st_name(tdie)
+
+def st_enum(self, tdie):
+    return 'enum %s' % st_opt_name(tdie)
+
+def st_struct(self, tdie):
+    return 'struct %s' % st_opt_name(tdie)
+
+def st_union(self, tdie):
+    return 'union %s' % st_opt_name(tdie)
+
+def st_unspec_param(self, tdie):
+    return '...'
+
+def st_subroutine(self, tdie):
+    pdie_l = get_params(tdie)
+    prms_st = ', '.join(st_type(self, pdie) for pdie in pdie_l)
+    return '%s(%s)(%s)' % (st_type(self, DIE_typeof(tdie)), st_opt_name(tdie), prms_st)
+
+# dispatch table for st_type(self, die)
+# contains st_<x>(self, die) -> string functions
 # tags that cannot exist in a ELF stub will be mapped on st_exit
 tag2st_func = dict(
   #DW_TAG_null                     =
@@ -334,12 +338,16 @@ tag2st_func = dict(
 )
 
 # TODO strip modifiers and dimensions
-def st_type(tdie):
+def st_type(self, tdie):
     if tdie == None:
         return 'void'
     if tdie.tag in tag2st_func:
-        return tag2st_func[tdie.tag](tdie)
+        self.name2tdie.add_type(tdie)
+        return tag2st_func[tdie.tag](self, tdie)
     return '/* <Die 0x%x> */' % tdie.offset
+
+
+# pr_<x>(self, die) dispatch functions
 
 def pr_variable(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
@@ -376,18 +384,20 @@ def pr_enumeration_type(self, die):
     self.pr_ln('};')
 
 def pr_user_type(self, die):
-    self.pr_ln('%s %s {' % (tag2usr_cls[die.tag], st_opt_name(die)))
-    self.ind_lvl += 1
-    for ch in die.iter_children():
-        self.pr_def(ch)
-    self.ind_lvl -= 1
-    self.pr_ln('};')
-
+    self.pr_ln('%s %s' % (tag2usr_cls[die.tag], st_opt_name(die)))
+    if DIE_has_file_scope(die) or not DIE_has_name(die):
+        self.pr('{')
+        self.ind_lvl += 1
+        for ch in die.iter_children():
+            self.pr_def(ch)
+        self.ind_lvl -= 1
+        self.pr_ln('}')
+    self.pr(';')
 
 def pr_subprogram(self, die):
     if not DIE_has_attr(die, 'DW_AT_external'): return
     tdie = DIE_typeof(die)
-    self.pr_ln('extern %s %s (' % (st_type(tdie), st_name(die)))
+    self.pr_ln('extern %s %s (' % (st_type(self, tdie), st_name(die)))
     self.ind_lvl += 1
     pdie_l = get_params(die)
     for ch in pdie_l:
@@ -539,11 +549,11 @@ class HeaderDumper(object):
             for name, lent in pubnames.items():
                 die = self.get_die_from_lut_entry(lent)
                 # BUG die = self.dwarfinfo.get_die_from_lutentry(lent) DOES not work
-                if die:
+                if die and DIE_has_name(die):
                     dname = st_name(die)
                     # self.pr_ln('// found %8x %8x %r --> %x %s %s' % (pent.cu_ofs, pent.die_ofs - pent.cu_ofs, name, die.offset, die.tag[7:], dname))
                     if name != dname:
-                        print('ERROR pub name and die name dont match %s !=  %s' % (name, dname), file = sys.stderr)
+                        print('ERROR pub name and die name don\'t match %r !=  %r' % (name, dname), file = sys.stderr)
                     else:
                         pdie_l.append(die)
                 else:
@@ -627,6 +637,9 @@ class HeaderDumper(object):
                 die to print definition of.
         '''
 
+        if die == None: 
+            self.pr('void')
+            return
         if die.tag in tag2pr_func:
             sig = DIE_get_sig(die)
             if sig:
@@ -676,7 +689,7 @@ class HeaderDumper(object):
 
     def pr(self, txt):
         '''writes txt to tmp file'''
-        self.tfile.write(txt)
+        print(txt, file = self.tfile)
 
 SCRIPT_DESCRIPTION = 'Extract header file from an ELF/DWARF formatted stub file'
 VERSION_STRING = '%%(prog)s: based on pyelftools %s' % __version__
@@ -699,7 +712,7 @@ SKIP_ANAME = (
 
 def process_file(ipath, opath, args):
     ifile = open(ipath, 'rb') if ipath else sys.stdin
-    ofile = open(opath, 'wb') if opath else sys.stdout
+    ofile = open(opath, 'w') if opath else sys.stdout
 
     print('... Processing file: %s --> %s ...' % (ifile.name, ofile.name), file = sys.stderr)
 
