@@ -27,6 +27,7 @@ from elftools.common.utils import bytes2str
 
 PROG = 'stub2hdr.py'
 
+# peel_off functions
 def st_subrange(die):
     if DIE_has_attr(die, 'DW_AT_upper_bound'):
         return '[%s]' % (DIE_attr(die, 'DW_AT_upper_bound').value + 1, )
@@ -40,7 +41,8 @@ PEEL_TAGS = (
     'DW_TAG_pointer_type', 
     'DW_TAG_reference_type', 
     'DW_TAG_const_type', 
-    'DW_TAG_restrict_type'
+    'DW_TAG_restrict_type',
+    'DW_TAG_subroutine_type'
     )
 
 def peel_off_types(tdie):
@@ -56,15 +58,6 @@ def peel_off_types(tdie):
         tdie = DIE_typeof(tdie)
     return tdie_l, tdie
 
-def st_dims(tdie):
-    txt = ''
-    for dim in tdie.iter_children():
-        if dim.tag == 'DW_TAG_subrange_type':
-            txt += st_subrange(dim)
-
-    return txt
-
-# TODO proper sub_expression nesting
 def sub_expr(txt):
     if txt[-1] == ']':
         return '(%s)' % txt
@@ -76,6 +69,8 @@ def st_type_expr(tdie_l, name):
     for tdie in tdie_l:
         if   tdie.tag in 'DW_TAG_array_type':
             txt = sub_expr(txt) + st_dims(tdie)
+        elif tdie.tag in 'DW_TAG_subroutine_type':
+            txt = '(%s)' % txt + '(/*TODO*/)'
         elif tdie.tag in 'DW_TAG_pointer_type':
             txt = '*%s' % txt
         elif tdie.tag in 'DW_TAG_reference_type':
@@ -86,6 +81,15 @@ def st_type_expr(tdie_l, name):
             txt = '__restrict %s' % txt
     return txt
 
+def st_dims(tdie):
+    txt = ''
+    for dim in tdie.iter_children():
+        if dim.tag == 'DW_TAG_subrange_type':
+            txt += st_subrange(dim)
+
+    return txt
+
+# TODO proper sub_expression nesting
 def st_form_dflt(die, val):
     return '%s' % val
 
@@ -411,21 +415,31 @@ class HeaderDumper(object):
             self.pr(' = %s' % st_attr(die, 'DW_AT_const_value'))
 
     def pr_enumeration_type(self, die, as_ref):
-        self.pr_ln('enum %s {' % st_opt_name(die))
-        ch_l = [ch for ch in die.iter_children()]
-        self.ind_lvl += 1
-        for ch in ch_l:
-            self.pr_def(ch, as_ref = False)
-            if ch != ch_l[-1]:
-                self.pr(',')
-        self.ind_lvl -= 1
-        self.pr_ln('};')
-
-    def pr_user_type(self, die, as_ref):
-        self.pr_ln('%s %s' % (tag2usr_cls[die.tag], st_opt_name(die)))
+        self.pr('enum %s' % st_opt_name(die))
         if as_ref:
             self.add_ref(die)
         else:
+            self.pr(' {')
+            ch_l = [ch for ch in die.iter_children()]
+            self.ind_lvl += 1
+            for ch in ch_l:
+                self.pr_def(ch, as_ref = False)
+                if ch != ch_l[-1]:
+                    self.pr(',')
+            self.ind_lvl -= 1
+            self.pr_ln('};')
+
+    def pr_user_type(self, die, as_ref):
+        if as_ref:
+            self.pr('%s %s' % (tag2usr_cls[die.tag], st_opt_name(die)))
+            self.add_ref(die)
+        else:
+            sig = DIE_get_sig(die)
+            if sig:
+                guard  = 'Type_%x' % sig 
+                self.pr_ln('\n#ifndef %s' % guard)
+                self.pr_ln('#define %s' % guard)
+            self.pr_ln('%s %s' % (tag2usr_cls[die.tag], st_opt_name(die)))
             self.pr(' {')
             self.ind_lvl += 1
             for ch in die.iter_children():
@@ -433,6 +447,8 @@ class HeaderDumper(object):
             self.ind_lvl -= 1
             self.pr_ln('}')
             self.pr(';')
+            if sig:
+                self.pr_ln('#endif\n')
 
     def pr_variable(self, die, as_ref):
         if not DIE_has_attr(die, 'DW_AT_external'): return
@@ -535,14 +551,7 @@ class HeaderDumper(object):
             return
         self.log_die(die, as_ref)
         if die.tag in self.tag2pr_func:
-            sig = DIE_get_sig(die)
-            if sig:
-                guard  = 'Type_%x' % sig 
-                self.pr('\n\n#ifndef %s' % guard)
-                self.pr('\n#define %s' % guard)
             self.tag2pr_func[die.tag](self, die, as_ref)
-            if sig:
-                self.pr('\n#endif')
         else:
             self.pr_children(die, as_ref = True)
 
