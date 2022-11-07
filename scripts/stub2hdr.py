@@ -415,10 +415,16 @@ class HeaderDumper(object):
             self.pr(' = %s' % st_attr(die, 'DW_AT_const_value'))
 
     def pr_enumeration_type(self, die, as_ref):
-        self.pr('enum %s' % st_opt_name(die))
         if as_ref:
+            self.pr('enum %s' % st_opt_name(die))
             self.add_ref(die)
         else:
+            sig = DIE_get_sig(die)
+            if sig:
+                guard  = 'Type_%x' % sig 
+                self.pr_ln('\n#ifndef %s' % guard)
+                self.pr_ln('#define %s' % guard)
+            self.pr_ln('enum %s' % st_opt_name(die))
             self.pr(' {')
             ch_l = [ch for ch in die.iter_children()]
             self.ind_lvl += 1
@@ -428,6 +434,8 @@ class HeaderDumper(object):
                     self.pr(',')
             self.ind_lvl -= 1
             self.pr_ln('};')
+            if sig:
+                self.pr_ln('#endif\n')
 
     def pr_user_type(self, die, as_ref):
         if as_ref:
@@ -452,13 +460,13 @@ class HeaderDumper(object):
 
     def pr_variable(self, die, as_ref):
         if not DIE_has_attr(die, 'DW_AT_external'): return
-        self.pr_ln('extern ')
+        self.pr_ln('\nextern ')
         self.pr_var(die, as_ref)
         self.pr(';')
 
     def pr_subprogram(self, die, as_ref):
-        if DIE_has_attr(die, 'DW_AT_external'):
-            self.pr_ln('extern ')
+        if not DIE_has_attr(die, 'DW_AT_external'): return
+        self.pr_ln('\nextern ')
         tdie = DIE_typeof(die)
         self.pr_def(tdie, as_ref = True)
         self.pr(' %s (' % st_opt_name(die))
@@ -558,7 +566,7 @@ class HeaderDumper(object):
     def pr_compile_unit(self, cu):
         die  = cu.get_top_DIE()
         fpth = die.get_full_path()
-        self.pr_ln('//   produced by: %s' % st_attr(die, 'DW_AT_producer'))
+        self.pr_ln('\n//   produced by: %s' % st_attr(die, 'DW_AT_producer'))
         self.pr_ln('//   pubnames of: %s' % fpth)
 
     def pr_var(self, die, as_ref):
