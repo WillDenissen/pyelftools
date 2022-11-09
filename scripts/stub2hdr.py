@@ -25,71 +25,30 @@ from elftools import __version__
 from elftools.elf.elffile import ELFFile
 from elftools.common.utils import bytes2str
 
-PROG = 'stub2hdr.py'
+# DIE support functions
+def DIE_get_sig(die):
+    if die.get_parent().tag == 'DW_TAG_type_unit':
+        return die.cu['type_signature']
 
-# peel_off functions
-def st_subrange(die):
-    if DIE_has_attr(die, 'DW_AT_upper_bound'):
-        return '[%s]' % (DIE_attr(die, 'DW_AT_upper_bound').value + 1, )
-    elif DIE_has_attr(die, 'DW_AT_count'):
-        return '[%s]' % (DIE_attr(die, 'DW_AT_count').value, )
-    else:
-        return '[]'
+def DIE_typeof(die):
+    return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
 
-PEEL_TAGS = (
-    'DW_TAG_array_type', 
-    'DW_TAG_pointer_type', 
-    'DW_TAG_reference_type', 
-    'DW_TAG_const_type', 
-    'DW_TAG_restrict_type',
-    'DW_TAG_subroutine_type'
-    )
+def DIE_attr(die, aname):
+    return die.attributes[aname]
 
-def peel_off_types(tdie):
-    '''walks over parent to child types list and peels off all types in PEEL_TAGS
-    
-        returns 
-          tdie_l : a parent child type list with tags within PEEL_TAGS
-          tdie   : fist child type with tag not in PEEL_TAGS 
-    '''
-    tdie_l = []
-    while tdie and tdie.tag in PEEL_TAGS:
-        tdie_l.append(tdie)
-        tdie = DIE_typeof(tdie)
-    return tdie_l, tdie
+def DIE_name(die):
+    return bytes2str(DIE_attr(die, 'DW_AT_name').value)
 
-def sub_expr(txt):
-    if txt[-1] == ']':
-        return '(%s)' % txt
-    else:
-        return txt
+def DIE_has_attr(die, aname):
+    return aname in die.attributes
 
-def st_type_expr(tdie_l, name):
-    txt = name
-    for tdie in tdie_l:
-        if   tdie.tag in 'DW_TAG_array_type':
-            txt = sub_expr(txt) + st_dims(tdie)
-        elif tdie.tag in 'DW_TAG_subroutine_type':
-            txt = '(%s)' % txt + '(/*TODO*/)'
-        elif tdie.tag in 'DW_TAG_pointer_type':
-            txt = '*%s' % txt
-        elif tdie.tag in 'DW_TAG_reference_type':
-            txt = '&%s' % txt
-        elif tdie.tag in 'DW_TAG_const_type':
-            txt = 'const %s' % txt
-        elif tdie.tag in 'DW_TAG_restrict_type':
-            txt = '__restrict %s' % txt
-    return txt
+def DIE_has_name(die):
+    return die and DIE_has_attr(die, 'DW_AT_name')
 
-def st_dims(tdie):
-    txt = ''
-    for dim in tdie.iter_children():
-        if dim.tag == 'DW_TAG_subrange_type':
-            txt += st_subrange(dim)
+def DIE_has_type(die):
+    return die and DIE_has_attr(die, 'DW_AT_type')
 
-    return txt
-
-# TODO proper sub_expression nesting
+# st_form functions 
 def st_form_dflt(die, val):
     return '%s' % val
 
@@ -201,28 +160,71 @@ def st_opt_name(die, default = '/* no name */'):
     else:
         return default
 
-def DIE_get_sig(die):
-    if die.get_parent().tag == 'DW_TAG_type_unit':
-        return die.cu['type_signature']
+# peel_off functions
+def st_subrange(die):
+    if DIE_has_attr(die, 'DW_AT_upper_bound'):
+        return '[%s]' % (DIE_attr(die, 'DW_AT_upper_bound').value + 1, )
+    elif DIE_has_attr(die, 'DW_AT_count'):
+        return '[%s]' % (DIE_attr(die, 'DW_AT_count').value, )
+    else:
+        return '[]'
 
-def DIE_typeof(die):
-    return die.get_DIE_from_attribute('DW_AT_type') if DIE_has_type(die) else None
+PEEL_TAGS = (
+    'DW_TAG_array_type', 
+    'DW_TAG_pointer_type', 
+    'DW_TAG_reference_type', 
+    'DW_TAG_const_type', 
+    'DW_TAG_restrict_type',
+    'DW_TAG_volatile_type', 
+    'DW_TAG_subroutine_type'
+    )
 
-def DIE_attr(die, aname):
-    return die.attributes[aname]
+def peel_off_types(tdie):
+    '''walks over parent to child types list and peels off all types in PEEL_TAGS
+    
+        returns 
+          tdie_l : a parent child type list with tags within PEEL_TAGS
+          tdie   : fist child type with tag not in PEEL_TAGS 
+    '''
+    tdie_l = []
+    while tdie and tdie.tag in PEEL_TAGS:
+        tdie_l.append(tdie)
+        tdie = DIE_typeof(tdie)
+    return tdie_l, tdie
 
-def DIE_name(die):
-    return bytes2str(DIE_attr(die, 'DW_AT_name').value)
+def sub_expr(txt):
+    if txt[-1] == ']':
+        return '(%s)' % txt
+    else:
+        return txt
 
-def DIE_has_attr(die, aname):
-    return aname in die.attributes
+# TODO proper sub_expression nesting
+def st_type_expr(tdie_l, name):
+    txt = name
+    for tdie in tdie_l:
+        if   tdie.tag in 'DW_TAG_array_type':
+            txt = sub_expr(txt) + st_dims(tdie)
+        elif tdie.tag in 'DW_TAG_subroutine_type':
+            txt = '(%s)' % txt + '(/*TODO*/)'
+        elif tdie.tag in 'DW_TAG_pointer_type':
+            txt = '*%s' % txt
+        elif tdie.tag in 'DW_TAG_reference_type':
+            txt = '&%s' % txt
+        elif tdie.tag in 'DW_TAG_const_type':
+            txt = 'const %s' % txt
+        elif tdie.tag in 'DW_TAG_restrict_type':
+            txt = 'restrict %s' % txt
+        elif tdie.tag in 'DW_TAG_volatile_type':
+            txt = 'volatile %s' % txt
+    return txt
 
-def DIE_has_name(die):
-    return die and DIE_has_attr(die, 'DW_AT_name')
+def st_dims(tdie):
+    txt = ''
+    for dim in tdie.iter_children():
+        if dim.tag == 'DW_TAG_subrange_type':
+            txt += st_subrange(dim)
 
-def DIE_has_type(die):
-    return die and DIE_has_attr(die, 'DW_AT_type')
-
+    return txt
 
 def get_params(die):
     return [ch for ch in die.iter_children() if ch.tag in ('DW_TAG_formal_parameter', 'DW_TAG_unspecified_parameters') and not DIE_has_attr(ch, 'DW_AT_artificial')]
@@ -251,6 +253,8 @@ class UnresolvedTypes(object):
 
     def __str__(self):
         res = 'resolved'
+
+PROG = 'stub2hdr.py'
 
 class HeaderDumper(object):
     def __init__(self, ifile, ofile, args):
