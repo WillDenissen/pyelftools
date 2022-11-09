@@ -198,26 +198,6 @@ def sub_expr(txt):
     else:
         return txt
 
-# TODO proper sub_expression nesting
-def st_type_expr(tdie_l, name):
-    txt = name
-    for tdie in tdie_l:
-        if   tdie.tag in 'DW_TAG_array_type':
-            txt = sub_expr(txt) + st_dims(tdie)
-        elif tdie.tag in 'DW_TAG_subroutine_type':
-            txt = '(%s)' % txt + '(/*TODO*/)'
-        elif tdie.tag in 'DW_TAG_pointer_type':
-            txt = '*%s' % txt
-        elif tdie.tag in 'DW_TAG_reference_type':
-            txt = '&%s' % txt
-        elif tdie.tag in 'DW_TAG_const_type':
-            txt = 'const %s' % txt
-        elif tdie.tag in 'DW_TAG_restrict_type':
-            txt = 'restrict %s' % txt
-        elif tdie.tag in 'DW_TAG_volatile_type':
-            txt = 'volatile %s' % txt
-    return txt
-
 def st_dims(tdie):
     txt = ''
     for dim in tdie.iter_children():
@@ -267,7 +247,7 @@ class HeaderDumper(object):
         '''
         self.ifile   = ifile
         self.ofile   = ofile
-        self.tfile   = None    # temporary file to
+        self.tfile   = None    # temporary file to store pr_... printed symbol/type declarations
         self.ind_lvl = 0       # indentation level
         self.args    = args
 
@@ -573,6 +553,26 @@ class HeaderDumper(object):
         self.pr_ln('\n//   produced by: %s' % st_attr(die, 'DW_AT_producer'))
         self.pr_ln('//   pubnames of: %s' % fpth)
 
+    # TODO proper sub_expression nesting
+    def pr_type_expr(self, tdie_l, name):
+        txt = name
+        for tdie in tdie_l:
+            if   tdie.tag in 'DW_TAG_array_type':
+                txt = sub_expr(txt) + st_dims(tdie)
+            elif tdie.tag in 'DW_TAG_subroutine_type':
+                txt = '(%s)' % txt + '(/*TODO*/)'
+            elif tdie.tag in 'DW_TAG_pointer_type':
+                txt = '*%s' % txt
+            elif tdie.tag in 'DW_TAG_reference_type':
+                txt = '&%s' % txt
+            elif tdie.tag in 'DW_TAG_const_type':
+                txt = 'const %s' % txt
+            elif tdie.tag in 'DW_TAG_restrict_type':
+                txt = 'restrict %s' % txt
+            elif tdie.tag in 'DW_TAG_volatile_type':
+                txt = 'volatile %s' % txt
+        self.pr(' ' + txt)
+
     def pr_var(self, die, as_ref):
         name           = st_opt_name(die)
         tdie           = DIE_typeof(die)
@@ -582,7 +582,7 @@ class HeaderDumper(object):
             self.pr('const ')
 
         self.pr_def(chtdie, as_ref = True)
-        self.pr(' ' + st_type_expr(tdie_l, name))
+        self.pr_type_expr(tdie_l, name)
 
     def pr_tag(self, die):
         if 'f' in self.args.verbosity:
